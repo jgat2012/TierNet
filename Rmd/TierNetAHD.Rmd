@@ -1,0 +1,201 @@
+---
+title: "Tiernet"
+author: "Gauthier A."
+date: "18/11/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+pacman::p_load(
+  rio,        # importing data  
+  here,       # relative file pathways
+  readxl,     # read excel
+  writexl,    # write excel
+  skimr,      # Exploring data
+  janitor,    # data cleaning and tables
+  lubridate,  # working with dates
+  epikit,     # age_categories() function
+  tidyverse,  # data management and visualization,
+  RODBC       # Odbc database connection
+)
+
+
+# use here from the here package
+here <- here::here
+# use clean_names from the janitor package
+clean_names <- janitor::clean_names
+
+# load functions used from R scripts
+source_path <- here("R", "RScripts.R")
+source(source_path,local = knitr::knit_global())
+
+data_folder <- "data"
+image_folder <- "images"
+output_folder <- "output"
+
+################################
+# 0. Importing Data            #
+# Version of Tier.net : 1.13.4 #
+################################
+
+con<-RODBC::odbcDriverConnect("Driver={Microsoft Access Driver (*.mdb)};DBQ=C:/Users/Gauthier Abdala/Documents/RWD/TierNet/Data/TierDES.mdb")
+
+vis_raw <- RODBC::sqlFetch(con,"VIS") #Follow Up clinic Visit table
+pat_raw <- RODBC::sqlFetch(con,"PAT") #Socio demographic char. & outcome table
+lab_raw <- RODBC::sqlFetch(con,"LAB") #Laboratory data table
+dem_raw <- RODBC::sqlFetch(con,"DEM") #Demographic information
+
+pregnancy_raw <- RODBC::sqlFetch(con,"PREGNANCY")  #Pregnancy information
+tb_raw        <- RODBC::sqlFetch(con,"TB")         #Tuberculosis Information
+vis_tb_raw    <- RODBC::sqlFetch(con,"VIS_TB")     #TB Visit Table
+transfers_raw <- RODBC::sqlFetch(con,"TRANSFERS")  #Transfer In/Out Table
+vis_preg_raw  <- RODBC::sqlFetch(con,"VIS_PREG")   #Antenatal Care
+infant_raw    <- RODBC::sqlFetch(con,"INFANT")     #Labour and Delivery
+
+###############################
+####       Cleaning        ####
+# 1. Cleaning column names    #
+###############################
+
+vis <- vis_raw %>% janitor::clean_names()
+pat <- pat_raw %>% janitor::clean_names()
+lab <- lab_raw %>% janitor::clean_names()
+dem <- dem_raw %>% janitor::clean_names()
+
+pregnancy <- pregnancy_raw  %>% janitor::clean_names()
+tb        <- tb_raw         %>% janitor::clean_names()
+vis_tb    <- vis_tb_raw     %>% janitor::clean_names()
+transfers <- transfers_raw  %>% janitor::clean_names()
+vis_preg  <- vis_preg_raw   %>% janitor::clean_names()
+infant    <- infant_raw     %>% janitor::clean_names()
+
+#####################################
+# 2. Select and/or re order columns #
+#####################################
+vis <- vis %>%
+  select(patient, visit_dmy, tb_status, who_stage, next_visit_dmy)
+
+pat <- pat %>%
+  select(patient, cohort, facility, birth_dmy,gender, frsvis_dmy,hivp_dmy, haart,
+         haart_dmy, fhv_stage_who, tb_fhv, method_into_art, transfer_in_dmy, outcome,
+         outcome_dmy)
+
+lab <- lab %>%
+  select(patient, lab_dmy, lab_id, lab_v, lab_t, episode_type, episode_id)
+
+dem <- dem %>%
+  select(patient, folder_number)
+
+tb <- tb %>%
+  select(patient, reg_dmy, tb_start_dmy, tb_end_dmy, tb_outcome, episode_id)
+
+vis_tb <- vis_tb %>%
+  select(patient, visit_dmy, next_visit_dmy, episode_id)
+
+transfers <- transfers %>%
+  select(patient, episode_id, facility_from, facility_to, transfer_dmy, transfer_action)
+
+#####################################
+# 3. Cleaning empty/null values     #
+#####################################
+
+vis <-trim_data_columns(vis)
+vis[is.null(vis)  | vis == "NULL" | vis == ""] <- NA
+
+pat <-trim_data_columns(pat)
+pat[is.null(pat)  | pat == "NULL" | pat == ""] <- NA
+
+lab <-trim_data_columns(lab)
+lab[is.null(lab)  | lab == "NULL" | lab == ""] <- NA
+
+dem <-trim_data_columns(dem)
+dem[is.null(dem)  | dem == "NULL" | dem == ""] <- NA
+
+tb <-trim_data_columns(tb)
+tb[is.null(tb)  | tb == "NULL" | tb == ""] <- NA
+
+vis_tb <-trim_data_columns(vis_tb)
+vis_tb[is.null(vis_tb)  | vis_tb == "NULL" | vis_tb == ""] <- NA
+
+transfers <-trim_data_columns(transfers)
+transfers[is.null(transfers)  | transfers == "NULL" | transfers == ""] <- NA
+
+
+#####################################
+# 4. Convert columns classes        #
+#####################################
+#is.date <- function(x) inherits(x, 'Date') #Used to check of column is date
+
+vis <- vis %>%
+  mutate(
+    visit_dmy = parse_date(visit_dmy,"%Y-%m-%d"),
+    next_visit_dmy = parse_date(next_visit_dmy,"%Y-%m-%d"),
+  ) %>%
+  mutate(
+    visit_dmy = as.Date(as.numeric(visit_dmy),origin ="1970-01-01"),
+    next_visit_dmy = as.Date(as.numeric(next_visit_dmy),origin ="1970-01-01")
+    )
+
+pat <- pat %>%
+  mutate(
+    birth_dmy = parse_date(birth_dmy,"%Y-%m-%d"),
+    frsvis_dmy = parse_date(frsvis_dmy,"%Y-%m-%d"),
+    hivp_dmy = parse_date(hivp_dmy,"%Y-%m-%d"),
+    haart_dmy = parse_date(haart_dmy,"%Y-%m-%d"),
+    transfer_in_dmy = parse_date(transfer_in_dmy,"%Y-%m-%d"),
+    outcome_dmy = parse_date(outcome_dmy,"%Y-%m-%d"),
+  ) %>%
+  mutate(
+    birth_dmy = as.Date(as.numeric(birth_dmy),origin ="1970-01-01"),
+    frsvis_dmy = as.Date(as.numeric(frsvis_dmy),origin ="1970-01-01"),
+    hivp_dmy = as.Date(as.numeric(hivp_dmy),origin ="1970-01-01"),
+    haart_dmy = as.Date(as.numeric(haart_dmy),origin ="1970-01-01"),
+    transfer_in_dmy = as.Date(as.numeric(transfer_in_dmy),origin ="1970-01-01"),
+    outcome_dmy = as.Date(as.numeric(outcome_dmy),origin ="1970-01-01"),
+    )
+
+lab <- lab %>%
+  mutate(
+    lab_dmy = parse_date(lab_dmy,"%Y-%m-%d")
+  ) %>%
+  mutate(
+    lab_dmy = as.Date(as.numeric(lab_dmy),origin ="1970-01-01")
+    )
+
+tb <- tb %>%
+  mutate(
+    reg_dmy = parse_date(reg_dmy,"%Y-%m-%d"),
+    tb_start_dmy = parse_date(tb_start_dmy,"%Y-%m-%d"),
+    tb_end_dmy = parse_date(tb_end_dmy,"%Y-%m-%d"),
+  ) %>%
+  mutate(
+    reg_dmy = as.Date(as.numeric(reg_dmy),origin ="1970-01-01"),
+    tb_start_dmy = as.Date(as.numeric(tb_start_dmy),origin ="1970-01-01"),
+    tb_end_dmy = as.Date(as.numeric(tb_end_dmy),origin ="1970-01-01"),
+    )
+
+vis_tb <- vis_tb %>%
+  mutate(
+    visit_dmy = parse_date(visit_dmy,"%Y-%m-%d"),
+    next_visit_dmy = parse_date(next_visit_dmy,"%Y-%m-%d"),
+  ) %>%
+  mutate(
+    visit_dmy = as.Date(as.numeric(visit_dmy),origin ="1970-01-01"),
+    next_visit_dmy = as.Date(as.numeric(next_visit_dmy),origin ="1970-01-01")
+    )
+
+transfers <- transfers %>%
+  mutate(
+    transfer_dmy = parse_date(transfer_dmy,"%Y-%m-%d")
+  ) %>%
+  mutate(
+    transfer_dmy = as.Date(as.numeric(transfer_dmy),origin ="1970-01-01")
+    )
+
+class(vis$next_visit_dmy)
+
+
+```
+
