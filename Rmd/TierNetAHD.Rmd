@@ -71,9 +71,9 @@ transfers <- transfers_raw  %>% janitor::clean_names()
 vis_preg  <- vis_preg_raw   %>% janitor::clean_names()
 infant    <- infant_raw     %>% janitor::clean_names()
 
-#####################################
-# 2. Select and/or re order columns #
-#####################################
+###########################################
+# 2. Select,add and/or re order/rename columns#
+###########################################
 vis <- vis %>%
   select(patient, visit_dmy, tb_status, who_stage, next_visit_dmy)
 
@@ -96,6 +96,7 @@ vis_tb <- vis_tb %>%
 
 transfers <- transfers %>%
   select(patient, episode_id, facility_from, facility_to, transfer_dmy, transfer_action)
+
 
 #####################################
 # 3. Cleaning empty/null values     #
@@ -122,23 +123,27 @@ vis_tb[is.null(vis_tb)  | vis_tb == "NULL" | vis_tb == ""] <- NA
 transfers <-trim_data_columns(transfers)
 transfers[is.null(transfers)  | transfers == "NULL" | transfers == ""] <- NA
 
-
 #####################################
 # 4. Convert columns classes        #
 #####################################
 #is.date <- function(x) inherits(x, 'Date') #Used to check of column is date
 
+
 vis <- vis %>%
+  mutate(across(.cols = everything(), .fns = as.character)) %>% #Convert all columns to character class
   mutate(
     visit_dmy = parse_date(visit_dmy,"%Y-%m-%d"),
     next_visit_dmy = parse_date(next_visit_dmy,"%Y-%m-%d"),
+    who_stage = parse_number(who_stage)
   ) %>%
   mutate(
     visit_dmy = as.Date(as.numeric(visit_dmy),origin ="1970-01-01"),
     next_visit_dmy = as.Date(as.numeric(next_visit_dmy),origin ="1970-01-01")
     )
 
+
 pat <- pat %>%
+  mutate(across(.cols = everything(), .fns = as.character)) %>% #Convert all columns to character class
   mutate(
     birth_dmy = parse_date(birth_dmy,"%Y-%m-%d"),
     frsvis_dmy = parse_date(frsvis_dmy,"%Y-%m-%d"),
@@ -157,14 +162,18 @@ pat <- pat %>%
     )
 
 lab <- lab %>%
+  mutate(across(.cols = everything(), .fns = as.character)) %>% #Convert all columns to character class
   mutate(
-    lab_dmy = parse_date(lab_dmy,"%Y-%m-%d")
+    lab_dmy = parse_date(lab_dmy,"%Y-%m-%d"),
+    lab_v = parse_number(lab_v)
   ) %>%
   mutate(
     lab_dmy = as.Date(as.numeric(lab_dmy),origin ="1970-01-01")
     )
 
+
 tb <- tb %>%
+  mutate(across(.cols = everything(), .fns = as.character)) %>% #Convert all columns to character class
   mutate(
     reg_dmy = parse_date(reg_dmy,"%Y-%m-%d"),
     tb_start_dmy = parse_date(tb_start_dmy,"%Y-%m-%d"),
@@ -177,6 +186,7 @@ tb <- tb %>%
     )
 
 vis_tb <- vis_tb %>%
+  mutate(across(.cols = everything(), .fns = as.character)) %>% #Convert all columns to character class
   mutate(
     visit_dmy = parse_date(visit_dmy,"%Y-%m-%d"),
     next_visit_dmy = parse_date(next_visit_dmy,"%Y-%m-%d"),
@@ -187,6 +197,7 @@ vis_tb <- vis_tb %>%
     )
 
 transfers <- transfers %>%
+  mutate(across(.cols = everything(), .fns = as.character)) %>% #Convert all columns to character class
   mutate(
     transfer_dmy = parse_date(transfer_dmy,"%Y-%m-%d")
   ) %>%
@@ -194,7 +205,135 @@ transfers <- transfers %>%
     transfer_dmy = as.Date(as.numeric(transfer_dmy),origin ="1970-01-01")
     )
 
-class(vis$next_visit_dmy)
+# transfers <- transfers %>%
+#   filter(transfer_dmy >as.Date("2017-12-31") & facility_from == "CH KABINDA")
+
+
+#####################################
+# 5. Merge tables                   #
+#####################################
+vis_data <- left_join(vis,dem,"patient") %>%
+  left_join(pat,"patient")
+
+#####################################
+# 6. Mapping values                 #
+#####################################
+gender_named        <- c("1" = "Male", "2" = "Female", "95" = NA, "99" = NA)
+haart_named         <- c("0" = "Not on ART", "1" = "on ART")
+outcome_named       <- c("10"= "Deceased", "20" = "In care", "30" = "Transfered Out", "31" = "Transfered Out", "40" = "LTFU", "41" = "LTFU", "95" = "Unknown")
+method_in_art_named <- c("0" = "New", "1" = "Transfer In", "88" = NA )
+
+vis_data <-vis_data %>%
+  mutate(
+    gender            = dplyr::recode(gender,!!!gender_named),
+    haart   = dplyr::recode(haart,!!!haart_named),
+    outcome        = dplyr::recode(outcome,!!!outcome_named),
+    method_into_art      = dplyr::recode(method_into_art,!!!method_in_art_named),
+  )
+
+
+######################################
+############ Analysis ################
+######################################
+#Strictly including patients
+
+#Get visits for patients that date of visit = date of art start date
+new_initiations <- vis_data %>%
+  filter( 
+    (visit_dmy >=as.Date("2021-01-01")) &  (visit_dmy <=as.Date("2021-03-31")) &
+    (vis_data$haart_dmy == vis_data$visit_dmy)
+    )
+
+#
+last_next_app_fnc <- function(patient_id, curr_vis_date){
+  result <- vis %>%
+    filter(
+      (patient == patient_id) &
+      (visit_dmy < curr_vis_date) #Filter visits before current visit date
+    ) %>%
+    arrange(desc(visit_dmy)) %>% #Sort by date of visit
+    select(next_visit_dmy) %>% 
+    head(1) #Only get the first top visit
+
+  result <- ifelse(nrow(result)==0,NA,result)
+  value <- result[[1]]
+  return (value)
+}
+
+
+#Patients who returned after missed appointment date > 90
+returnees <- vis_data %>%
+  filter( #Filter patients visits dates for the reporting period
+    (visit_dmy >=as.Date("2021-01-01")) &  (visit_dmy <=as.Date("2021-03-31"))
+  )%>%
+  mutate( #Get last next appointment date
+    last_next_app_date =  (map2(patient,visit_dmy,last_next_app_fnc))
+    ) %>%
+  mutate( #Convert returned valued to date
+    last_next_app_date = as.Date(as.numeric(last_next_app_date),origin ="1970-01-01")
+    ) %>%
+  filter( #Filter only ltfu visits
+    (visit_dmy - last_next_app_date) >90
+  )
+
+
+last_vl_fnc <- function(patient_id, curr_vis_date,test){
+  df <- data.frame(
+    lab_dmy = NA,
+    lab_v = NA
+  )
+  
+  result <- lab %>%
+    filter(
+      (patient == patient_id) &
+      (lab_dmy < curr_vis_date) & #Filter visits before current visit date
+      (lab_id  ==test) #Filter only VL results
+    ) %>%
+    arrange(desc(lab_dmy)) %>% #Sort by date of lab result
+    select(lab_dmy,lab_v) %>% 
+    head(1) #Only get the first top visit
+  
+  if(nrow(result)>0){
+    df<-result
+  }
+  
+  return ((df))
+}
+
+#patient <-"2a288cce-65cc-459b-bac8-011255e6e7d6"
+patient <-"6cbacba9-5f18-41a8-879d-07b8582b4398"
+vis_date <-as.Date("2021-01-02")
+head(last_vl_fnc(patient,vis_date))
+
+
+#High VL
+#######
+# Q/ Are we counting patients or visits?i.e. patient that came twice during
+# reporting period
+# Q/ How do we account for patients that did CD4 between reporting period and last VL?
+#######
+high_vl <-vis_data %>%
+  filter( #Filter patients visits dates for the reporting period
+    (visit_dmy >=as.Date("2021-01-01")) &  (visit_dmy <=as.Date("2021-03-31"))
+  ) %>%
+  mutate( # Get last VL value and date
+    last_vl = ((pmap_df(list(patient,visit_dmy,"RNA"),last_vl_fnc))) 
+  ) %>%
+  filter( # Fitler only visits that had VL > 1000
+    last_vl$lab_v > 1000
+  ) %>%
+  mutate( # Get last CD4 done
+    last_cd4 = ((pmap_df(list(patient,visit_dmy,"CD4A"),last_vl_fnc))) 
+  ) %>% 
+  mutate( #Add column for time difference between last vl and last CD4
+    diff = last_vl$lab_dmy - last_cd4$lab_dmy
+  ) %>%
+  filter(
+    (last_vl$lab_dmy - last_cd4$lab_dmy) > 90 | is.na(last_cd4$lab_dmy)
+  )
+
+
+
 
 
 ```
