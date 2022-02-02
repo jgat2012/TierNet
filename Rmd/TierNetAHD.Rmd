@@ -18,6 +18,11 @@ pacman::p_load(
   lubridate,  # working with dates
   epikit,     # age_categories() function
   tidyverse,  # data management and visualization,
+  gtsummary,  # summary statistics and tests,
+  rstatix,    # summary statistics and statistical tests
+  scales,     # easily convert proportions to percents  
+  labelled,   # Variable and values labelling
+  flextable,  # Format tables
   RODBC       # Odbc database connection
 )
 
@@ -35,10 +40,10 @@ data_folder <- "data"
 image_folder <- "images"
 output_folder <- "output"
 
-################################
-# 0. Importing Data            #
-# Version of Tier.net : 1.13.4 #
-################################
+###############################################################################
+#################   I. Importing & Exploring Data             #################
+###################   Version of Tier.net : 1.13.4          ###################
+###############################################################################
 
 con<-RODBC::odbcDriverConnect("Driver={Microsoft Access Driver (*.mdb)};DBQ=C:/Users/Gauthier Abdala/Documents/RWD/TierNet/Data/TierDES.mdb")
 
@@ -54,10 +59,14 @@ transfers_raw <- RODBC::sqlFetch(con,"TRANSFERS")  #Transfer In/Out Table
 vis_preg_raw  <- RODBC::sqlFetch(con,"VIS_PREG")   #Antenatal Care
 infant_raw    <- RODBC::sqlFetch(con,"INFANT")     #Labour and Delivery
 
-###############################
-####       Cleaning        ####
-# 1. Cleaning column names    #
-###############################
+
+#############################################################################
+########################      II. Cleaning data    ##########################
+#############################################################################
+
+
+############# 1. Cleaning column names    #################
+###########################################################
 
 vis <- vis_raw %>% janitor::clean_names()
 pat <- pat_raw %>% janitor::clean_names()
@@ -71,9 +80,9 @@ transfers <- transfers_raw  %>% janitor::clean_names()
 vis_preg  <- vis_preg_raw   %>% janitor::clean_names()
 infant    <- infant_raw     %>% janitor::clean_names()
 
-###########################################
-# 2. Select,add and/or re order/rename columns#
-###########################################
+
+####### 2. Select,add and/or re order/rename columns #######
+############################################################
 vis <- vis %>%
   select(patient, visit_dmy, tb_status, who_stage, next_visit_dmy)
 
@@ -98,9 +107,9 @@ transfers <- transfers %>%
   select(patient, episode_id, facility_from, facility_to, transfer_dmy, transfer_action)
 
 
-#####################################
-# 3. Cleaning empty/null values     #
-#####################################
+
+################ 3. Cleaning empty/null values     ##########
+#############################################################
 
 vis <-trim_data_columns(vis)
 vis[is.null(vis)  | vis == "NULL" | vis == ""] <- NA
@@ -123,9 +132,9 @@ vis_tb[is.null(vis_tb)  | vis_tb == "NULL" | vis_tb == ""] <- NA
 transfers <-trim_data_columns(transfers)
 transfers[is.null(transfers)  | transfers == "NULL" | transfers == ""] <- NA
 
-#####################################
-# 4. Convert columns classes        #
-#####################################
+
+################ 4. Convert columns classes      #############
+##############################################################
 #is.date <- function(x) inherits(x, 'Date') #Used to check of column is date
 
 
@@ -209,40 +218,48 @@ transfers <- transfers %>%
 #   filter(transfer_dmy >as.Date("2017-12-31") & facility_from == "CH KABINDA")
 
 
-#####################################
-# 5. Merge tables                   #
-#####################################
+
+################# 5. Merge tables                   ##############
+##################################################################
 vis_data <- left_join(vis,dem,"patient") %>%
   left_join(pat,"patient")
 
-#####################################
-# 6. Mapping values                 #
-#####################################
-gender_named        <- c("1" = "Male", "2" = "Female", "95" = NA, "99" = NA)
-haart_named         <- c("0" = "Not on ART", "1" = "on ART")
-outcome_named       <- c("10"= "Deceased", "20" = "In care", "30" = "Transfered Out", "31" = "Transfered Out", "40" = "LTFU", "41" = "LTFU", "95" = "Unknown")
-method_in_art_named <- c("0" = "New", "1" = "Transfer In", "88" = NA )
 
-vis_data <-vis_data %>%
-  mutate(
-    gender            = dplyr::recode(gender,!!!gender_named),
-    haart   = dplyr::recode(haart,!!!haart_named),
-    outcome        = dplyr::recode(outcome,!!!outcome_named),
-    method_into_art      = dplyr::recode(method_into_art,!!!method_in_art_named),
-  )
+################# 6. Add variables/values labels    ##############
+##################################################################
+labelled::val_labels(vis_data$gender)  <-c("1" = "Male", "2" = "Female", "95" = NA, "99" = NA)
+labelled::val_labels(vis_data$haart)   <-c("0" = "Not on ART", "1" = "on ART")
+labelled::val_labels(vis_data$outcome) <-c("10"= "Deceased", "20" = "In care", "30" = "Transfered Out", "40" = "LTFU", "95" = "Unknown")
+labelled::val_labels(vis_data$method_in_art_named) <-c("0" = "New", "1" = "Transfer In", "88" = NA )
 
 
-######################################
-############ Analysis ################
-######################################
+
+```
+
+```{r, include=FALSE}
+
+#############################################################################
+########################      II. Analyzing data    #########################
+#############################################################################
+
+
+
 #Strictly including patients
 
 #Get visits for patients that date of visit = date of art start date
+
+
+#Q/ Do we need a time window for initiations or do we keep strict art_start_date==visit_date
+
 new_initiations <- vis_data %>%
   filter( 
+    #Filter patients that have visits in the reporting period
     (visit_dmy >=as.Date("2021-01-01")) &  (visit_dmy <=as.Date("2021-03-31")) &
+      #Only include patients for which dates of art start date = visit date
     (vis_data$haart_dmy == vis_data$visit_dmy)
     )
+
+
 
 #
 last_next_app_fnc <- function(patient_id, curr_vis_date){
@@ -261,7 +278,7 @@ last_next_app_fnc <- function(patient_id, curr_vis_date){
 }
 
 
-#Patients who returned after missed appointment date > 90
+#Patients who returned after missed appointment date > 90 days
 returnees <- vis_data %>%
   filter( #Filter patients visits dates for the reporting period
     (visit_dmy >=as.Date("2021-01-01")) &  (visit_dmy <=as.Date("2021-03-31"))
@@ -272,11 +289,17 @@ returnees <- vis_data %>%
   mutate( #Convert returned valued to date
     last_next_app_date = as.Date(as.numeric(last_next_app_date),origin ="1970-01-01")
     ) %>%
-  filter( #Filter only ltfu visits
+  filter( #Filter only lost to follow up visits
     (visit_dmy - last_next_app_date) >90
+  )%>%
+  relocate(
+    #Move last_next_app_date column
+    last_next_app_date, .before = visit_dmy 
   )
 
+returnees
 
+#Function that returns the last vl date and value for a patient
 last_vl_fnc <- function(patient_id, curr_vis_date,test){
   df <- data.frame(
     lab_dmy = NA,
@@ -310,7 +333,7 @@ head(last_vl_fnc(patient,vis_date))
 #######
 # Q/ Are we counting patients or visits?i.e. patient that came twice during
 # reporting period
-# Q/ How do we account for patients that did CD4 between reporting period and last VL?
+# Q/ How do we account for patients that did CD4 between reporting period and last High VL?
 #######
 high_vl <-vis_data %>%
   filter( #Filter patients visits dates for the reporting period
@@ -333,7 +356,15 @@ high_vl <-vis_data %>%
   )
 
 
-
+###CD4 Lab Data
+lab_data_cd4 <-lab %>%
+  filter((lab_id =="CD4A") & !is.na(lab_v)) %>%
+  mutate(
+    cd4_category = age_categories(
+      lab_v,
+      breakers = c(0,200,1000)
+    )
+  )
 
 
 ```
