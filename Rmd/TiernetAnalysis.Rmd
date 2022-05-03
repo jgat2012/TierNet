@@ -1,0 +1,911 @@
+---
+title: "TierNet Analysis"
+author: "Gauthier A."
+date: '2022-04-04'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+pacman::p_load(
+  rio,        # importing data  
+  here,       # relative file pathways
+  readxl,     # read excel
+  writexl,    # write excel
+  strex,      #String manipulation
+  #skimr,      # Exploring data
+  janitor,    # data cleaning and tables
+  lubridate,  # working with dates
+  #epikit,     # age_categories() function
+  tidyverse,  # data management and visualization,
+  #gtsummary,  # summary statistics and tests,
+  #rstatix,    # summary statistics and statistical tests
+  scales,     # easily convert proportions to percents  
+  labelled,   # Variable and values labelling
+  flextable,  # Format tables
+  RODBC       # Odbc database connection
+)
+
+# use here from the here package
+here <- here::here
+# use clean_names from the janitor package
+clean_names <- janitor::clean_names
+
+# load functions used from R scripts
+source_path <- here("R", "RScripts.R")
+source(source_path,local = knitr::knit_global())
+
+data_folder <- "data"
+image_folder <- "images"
+output_folder <- "output"
+
+```
+
+```{r setup, include=FALSE}
+
+
+###############################################################################
+#################   I. Importing & Exploring Data         #####################
+###################   Version of Tier.net : 1.13.4      #######################
+###############################################################################
+
+#con_old<-RODBC::odbcDriverConnect("Driver={Microsoft Access Driver (*.mdb)};DBQ=C:/Users/Gauthier Abdala/Documents/RWD/TierNet/data/TierDESBanguiDeLiege20220407.mdb")
+con<-RODBC::odbcDriverConnect("Driver={Microsoft Access Driver (*.mdb)};DBQ=C:/Users/Gauthier Abdala/Documents/RWD/TierNet/data/TierDESBanguiEloge_20220422.mdb")
+
+#vis_raw_old <- RODBC::sqlFetch(con_old,"VIS") #Follow Up clinic Visit table
+#pat_raw_old <- RODBC::sqlFetch(con_old,"PAT") #Socio demographic char. & outcome table
+#lab_raw_old <- RODBC::sqlFetch(con_old,"LAB") #Laboratory data table
+
+vis_raw <- RODBC::sqlFetch(con,"VIS") #Follow Up clinic Visit table
+pat_raw <- RODBC::sqlFetch(con,"PAT") #Socio demographic char. & outcome table
+lab_raw <- RODBC::sqlFetch(con,"LAB") #Laboratory data table
+dem_raw <- RODBC::sqlFetch(con,"DEM") #Demographic information
+
+###### Compare data ######
+summary(arsenal::comparedf(vis_raw_old,vis_raw,by=c("PATIENT","VISIT_DMY","VISIT_FAC")))
+summary(arsenal::comparedf(pat_raw_old,pat_raw,by=c("PATIENT","COHORT","FACILITY","BIRTH_DMY","GENDER")))
+summary(arsenal::comparedf(lab_raw_old,lab_raw,by=c("PATIENT","LAB_DMY","LAB_ID")))
+
+##########################
+
+#pregnancy_raw <- RODBC::sqlFetch(con,"PREGNANCY")  #Pregnancy information
+tb_raw        <- RODBC::sqlFetch(con,"TB")         #Tuberculosis Information
+vis_tb_raw    <- RODBC::sqlFetch(con,"VIS_TB")     #TB Visit Table
+transfers_raw <- RODBC::sqlFetch(con,"TRANSFERS")  #Transfer In/Out Table
+#vis_preg_raw  <- RODBC::sqlFetch(con,"VIS_PREG")   #Antenatal Care
+#infant_raw    <- RODBC::sqlFetch(con,"INFANT")     #Labour and Delivery
+
+```
+
+```{r include = FALSE}
+
+################################################################################
+##########################     II. Cleaning data    ############################
+################################################################################
+
+############# 1. Cleaning column names    #################
+###########################################################
+
+vis <- vis_raw %>% janitor::clean_names()
+pat <- pat_raw %>% janitor::clean_names()
+lab <- lab_raw %>% janitor::clean_names()
+dem <- dem_raw %>% janitor::clean_names()
+
+pregnancy <- pregnancy_raw  %>% janitor::clean_names()
+tb        <- tb_raw         %>% janitor::clean_names()
+vis_tb    <- vis_tb_raw     %>% janitor::clean_names()
+transfers <- transfers_raw  %>% janitor::clean_names()
+#vis_preg  <- vis_preg_raw   %>% janitor::clean_names()
+#infant    <- infant_raw     %>% janitor::clean_names()
+
+
+####### 2. Select,add and/or re order/rename columns #######
+############################################################
+vis <- vis %>%
+  select(patient, visit_dmy, tb_status, who_stage, next_visit_dmy)
+
+pat <- pat %>%
+  select(patient, cohort, facility, birth_dmy,gender, frsvis_dmy,hivp_dmy, haart,
+         haart_dmy, fhv_stage_who, tb_fhv, method_into_art, transfer_in_dmy, outcome,
+         outcome_dmy)
+
+lab <- lab %>%
+  select(patient, lab_dmy, lab_id, lab_v, lab_t, episode_type, episode_id)
+
+dem <- dem %>%
+  select(patient, folder_number)
+
+tb <- tb %>%
+  select(patient, reg_dmy, tb_start_dmy, tb_end_dmy, tb_outcome, episode_id)
+
+vis_tb <- vis_tb %>%
+  select(patient, visit_dmy, next_visit_dmy, episode_id)
+
+transfers <- transfers %>%
+  select(patient, episode_id, facility_from, facility_to, transfer_dmy, transfer_action)
+
+
+
+################ 3. Cleaning empty/null values     ##########
+#############################################################
+
+vis <-trim_data_columns(vis)
+vis[is.null(vis)  | vis == "NULL" | vis == ""] <- NA
+
+pat <-trim_data_columns(pat)
+pat[is.null(pat)  | pat == "NULL" | pat == ""] <- NA
+
+lab <-trim_data_columns(lab)
+lab[is.null(lab)  | lab == "NULL" | lab == ""] <- NA
+
+dem <-trim_data_columns(dem)
+dem[is.null(dem)  | dem == "NULL" | dem == ""] <- NA
+
+tb <-trim_data_columns(tb)
+tb[is.null(tb)  | tb == "NULL" | tb == ""] <- NA
+
+vis_tb <-trim_data_columns(vis_tb)
+vis_tb[is.null(vis_tb)  | vis_tb == "NULL" | vis_tb == ""] <- NA
+
+transfers <-trim_data_columns(transfers)
+transfers[is.null(transfers)  | transfers == "NULL" | transfers == ""] <- NA
+
+################ 4. Convert columns classes      #############
+##############################################################
+#is.date <- function(x) inherits(x, 'Date') #Used to check of column is date
+
+
+vis <- vis %>%
+  mutate(across(.cols = everything(), .fns = as.character)) %>% #Convert all columns to character class
+  mutate(
+    visit_dmy = parse_date(visit_dmy,"%Y-%m-%d"),
+    next_visit_dmy = parse_date(next_visit_dmy,"%Y-%m-%d"),
+    who_stage = parse_number(who_stage)
+  ) %>%
+  mutate(
+    visit_dmy = as.Date(as.numeric(visit_dmy),origin ="1970-01-01"),
+    next_visit_dmy = as.Date(as.numeric(next_visit_dmy),origin ="1970-01-01")
+    )
+
+
+pat <- pat %>%
+  mutate(across(.cols = everything(), .fns = as.character)) %>% #Convert all columns to character class
+  mutate(
+    birth_dmy = parse_date(birth_dmy,"%Y-%m-%d"),
+    frsvis_dmy = parse_date(frsvis_dmy,"%Y-%m-%d"),
+    hivp_dmy = parse_date(hivp_dmy,"%Y-%m-%d"),
+    haart_dmy = parse_date(haart_dmy,"%Y-%m-%d"),
+    transfer_in_dmy = parse_date(transfer_in_dmy,"%Y-%m-%d"),
+    outcome_dmy = parse_date(outcome_dmy,"%Y-%m-%d"),
+  ) %>%
+  mutate(
+    birth_dmy = as.Date(as.numeric(birth_dmy),origin ="1970-01-01"),
+    frsvis_dmy = as.Date(as.numeric(frsvis_dmy),origin ="1970-01-01"),
+    hivp_dmy = as.Date(as.numeric(hivp_dmy),origin ="1970-01-01"),
+    haart_dmy = as.Date(as.numeric(haart_dmy),origin ="1970-01-01"),
+    transfer_in_dmy = as.Date(as.numeric(transfer_in_dmy),origin ="1970-01-01"),
+    outcome_dmy = as.Date(as.numeric(outcome_dmy),origin ="1970-01-01"),
+    )
+
+lab <- lab %>%
+  mutate(across(.cols = everything(), .fns = as.character)) %>% #Convert all columns to character class
+  mutate(
+    lab_dmy = parse_date(lab_dmy,"%Y-%m-%d"),
+    lab_v = parse_number(lab_v)
+  ) %>%
+  mutate(
+    lab_dmy = as.Date(as.numeric(lab_dmy),origin ="1970-01-01")
+    )
+
+
+tb <- tb %>%
+  mutate(across(.cols = everything(), .fns = as.character)) %>% #Convert all columns to character class
+  mutate(
+    reg_dmy = parse_date(reg_dmy,"%Y-%m-%d"),
+    tb_start_dmy = parse_date(tb_start_dmy,"%Y-%m-%d"),
+    tb_end_dmy = parse_date(tb_end_dmy,"%Y-%m-%d"),
+  ) %>%
+  mutate(
+    reg_dmy = as.Date(as.numeric(reg_dmy),origin ="1970-01-01"),
+    tb_start_dmy = as.Date(as.numeric(tb_start_dmy),origin ="1970-01-01"),
+    tb_end_dmy = as.Date(as.numeric(tb_end_dmy),origin ="1970-01-01"),
+    )
+
+vis_tb <- vis_tb %>%
+  mutate(across(.cols = everything(), .fns = as.character)) %>% #Convert all columns to character class
+  mutate(
+    visit_dmy = parse_date(visit_dmy,"%Y-%m-%d"),
+    next_visit_dmy = parse_date(next_visit_dmy,"%Y-%m-%d"),
+  ) %>%
+  mutate(
+    visit_dmy = as.Date(as.numeric(visit_dmy),origin ="1970-01-01"),
+    next_visit_dmy = as.Date(as.numeric(next_visit_dmy),origin ="1970-01-01")
+    )
+
+transfers <- transfers %>%
+  mutate(across(.cols = everything(), .fns = as.character)) %>% #Convert all columns to character class
+  mutate(
+    transfer_dmy = parse_date(transfer_dmy,"%Y-%m-%d")
+  ) %>%
+  mutate(
+    transfer_dmy = as.Date(as.numeric(transfer_dmy),origin ="1970-01-01")
+    )
+
+
+
+
+################# 5. Merge tables                   ##############
+##################################################################
+pat_data <-left_join(pat,dem,"patient")
+vis_data <- left_join(vis,dem,"patient") %>%
+  left_join(pat,"patient")
+
+#vis_data<- left_join(vis,pat,"patient")
+
+vis_data %>%
+  #group_by(facility)%>%
+  summarise(
+    tot = n()
+  )
+vis_data_tb <- 
+  left_join(vis_tb,tb,c("patient" = "patient", "episode_id" = "episode_id")) %>%
+  select(patient,visit_dmy,next_visit_dmy,episode_id,tb_start_dmy,tb_end_dmy,tb_outcome)%>%
+  left_join(pat,"patient")
+
+
+
+
+################# 6. Add variables/values labels    ##############
+##################################################################
+labelled::val_labels(vis_data$gender)  <-c("1" = "Male", "2" = "Female", "95" = NA, "99" = NA)
+labelled::val_labels(vis_data$haart)   <-c("0" = "Not on ART", "1" = "on ART")
+labelled::val_labels(vis_data$outcome) <-c("10"= "Deceased", "20" = "In care", "30" = "Transfered Out", "40" = "LTFU", "95" = "Unknown")
+labelled::val_labels(vis_data$method_in_art_named) <-c("0" = "New", "1" = "Transfer In", "88" = NA )
+
+#summary(vis_data_tb)
+
+```
+
+```{r, include=FALSE,fig.align=center,fig.height=6,warning=FALSE}
+
+#############################################################################
+##############      III. Analyzing data/presenting    #######################
+#############################################################################
+
+########################## ACTIVE COHORT ####################################
+#############################################################################
+# + Initiations by the end of the reporting period : New + Transfers In
+# - Transfers out by end of reporting reporting period
+# - Deceased
+# - LTFUP by  end of reporting period
+
+####################### ART INITIATION ANALYSIS ###########################
+##########################################################################
+art_initiations <- pat_data %>%
+  mutate(
+    art_start_date_fold = substr(folder_number,(nchar(folder_number)-8+1),nchar(folder_number)),
+    period_hiv_diag     = format(as.Date(hivp_dmy), "%Y-%m"),
+    quarter_hiv_diag    = quarter(hivp_dmy,with_year = T),
+    period_art_init     = format(as.Date(haart_dmy), "%Y-%m"),
+    quarter_art_init    = quarter(haart_dmy,with_year = T)
+  )%>%
+  mutate(
+    art_start_fold_format = substr(#Get substring with 5 characters
+        strex::str_after_nth(folder_number,"/",2),1,5 #Get substring after second occurence of "/" and limit to 5 characters (year and month)
+    )
+  )%>%
+  mutate(
+    period_art_init_fold = format(as.Date(paste("20",art_start_fold_format,"/01",sep = "")), "%Y-%m"),
+    quarter_art_init_fold    = quarter(as.Date(paste("20",art_start_fold_format,"/01",sep = "")),with_year = T),
+    diff_art_fold =  difftime(as.Date(paste("20",art_start_fold_format,"/01",sep = "")),as.Date(haart_dmy), units = c("weeks")),
+    diff_gt_6m = ifelse(abs(diff_art_fold)>12,"yes","no")
+  )
+
+#Patients initiated on ART with ART Start date > 6M from Diag date
+hiv_art_12m <-art_initiations %>%
+  filter(
+    quarter_art_init >=quarter(as.Date("2015/01/01"),with_year = T) 
+  )%>%
+  group_by(facility,quarter_art_init)%>%
+  summarise(
+    tot_diff_art_gt_12m = sum(diff_gt_6m=="yes",na.rm = TRUE)
+  )
+
+
+hiv_art_12m %>%
+  ggplot(
+    aes(x=quarter_art_init,y=tot_diff_art_gt_12m)
+  )+
+  geom_bar(
+    stat = "identity"
+  )+
+  facet_grid(~facility)
+
+#Patients started on ART without an HIV diagnosis date 
+hiv_diag <-vis_data %>%
+  mutate(
+    period_hiv_diag     = format(as.Date(hivp_dmy), "%Y-%m"),
+    quarter_hiv_diag    = quarter(hivp_dmy,with_year = T),
+    period_art_init     = format(as.Date(haart_dmy), "%Y-%m"),
+    quarter_art_init    = quarter(haart_dmy,with_year = T)
+  )%>%
+  filter(
+    quarter_art_init >=quarter(as.Date("2005/01/01"),with_year = T) 
+    
+  )%>%
+  group_by(facility,quarter_art_init)%>%
+  summarise(
+    tot_no_hiv_diagn = sum(is.na(period_hiv_diag),na.rm = TRUE)
+  )
+
+hiv_diag %>%
+  ggplot(
+    aes(x=quarter_art_init,y=tot_no_hiv_diagn)
+  )+
+  geom_bar(
+    stat = "identity"
+  )+
+  facet_grid(~facility)
+```
+
+```{r include=FALSE}
+
+####################### ART OUTCOME ANALYSIS ##############################
+###########################################################################
+cohort_period <- as.Date("2021/12/31")
+outcome_start_period <-as.Date("2019/10/01")
+outcome_end_period   <-as.Date("2020/09/30")
+
+cohort_inititations <- vis_data %>%
+  arrange(desc(visit_dmy))%>%
+  filter( #Filter initiations before cohort period
+    haart_dmy <= cohort_period
+  ) %>%
+  filter( #Excluding deceased
+    outcome !=11
+  )
+
+
+lab_cv_summary <-lab %>%
+  filter(lab_id =="RNA" & lab_dmy>=as.Date("2021-01-01"))%>%
+  mutate(quarter_year = quarter(lab_dmy,with_year = T),
+         month_year   = format(as.Date(lab_dmy), "%Y-%m"))%>%
+  group_by(
+    month_year
+  )%>%
+  summarise(
+    total = n()
+  )
+
+
+lab_cd4_summary <-lab %>%
+  filter(lab_id == "CD4A" & lab_dmy>=as.Date("2021-01-01")) %>%
+  mutate(quarter_year = quarter(lab_dmy,with_year = T),
+         month_year   = format(as.Date(lab_dmy), "%Y-%m"))
+
+lab_cv_summary%>%
+  ggplot(aes(
+    stat = "count",
+      x = month_year
+    ))+
+  geom_histogram(
+    stat = "count",
+    fill="#69b3a2", 
+    color="#e9ecef", 
+    alpha=0.9)+
+  theme(
+    aspect.ratio = 0.5
+  )+
+  labs(
+    title="Realisation Charge Virale"
+  )
+
+lab_cd4_summary%>%
+  ggplot(aes(
+    stat = "count",
+      x = month_year
+    ))+
+  geom_histogram(
+    stat = "count",
+    fill="#69b3a2", 
+    color="#e9ecef", 
+    alpha=0.9)+
+  labs(
+    title = "Realisation CD4"
+  )+
+  theme(
+    aspect.ratio = 0.5
+  )
+
+
+########################## ACTIVE COHORT ####################################
+#############################################################################
+
+
+################# 0. INITIATIONS #####################
+######################################################
+new_initiations <- vis_data %>%
+  filter( 
+    #Filter patients that have visits in the reporting period
+    (haart_dmy >=as.Date("2022/01/01")) #&
+      #Only include patients for which dates of art start date = visit date
+    #(vis_data$haart_dmy == vis_data$visit_dmy)
+    ) %>%
+  arrange(visit_dmy) %>%
+  mutate(quarter_year = quarter(visit_dmy,with_year = T),
+         month_year   = format(as.Date(visit_dmy), "%Y-%m"))
+
+new_initiations%>%
+  ggplot(aes(
+    stat = "count",
+      x = month_year
+    ))+
+  geom_histogram(
+    stat = "count",
+    fill="#69b3a2", 
+    color="#e9ecef", 
+    alpha=0.9)+
+  theme(
+    aspect.ratio = 0.5
+  )+
+  labs(
+    title="New initiations"
+  )
+
+
+export_tier_raw <- read_excel(here(data_folder,"List_TierNet_MsfBqnguiVih_Export_HIV_20220406.xlsx"))
+export_tier<- export_tier_raw%>% janitor::clean_names()
+
+
+
+
+####### Change cascade : Initiated =>Still in care =>had VL =>VL Suppressed ##############################
+start_reporting_period = as.Date("2022/01/01")
+end_reporting_period   = as.Date("2022/03/31")
+
+export_tier <- export_tier%>%
+  janitor::clean_names() %>%
+  mutate(
+    art_start_fold_format = substr(#Get substring with 5 characters
+      strex::str_after_nth(folder_number,"/",2),1,5 #Get substring after second occurence of "/" and limit to 5 characters (year and month)
+    )
+  ) %>%
+  mutate(#Format date from folder number
+    art_start_fold_format = as.Date(paste("20",art_start_fold_format,"/01",sep = ""))
+  )
+
+
+file_active <- export_tier %>%
+  filter(
+    active =="OUI" &
+      !(as.Date(outcome_date)>=start_reporting_period & as.Date(outcome_date)<=end_reporting_period & ((outcome =="Décédé" | outcome =="Transféré ailleurs" | outcome =="Perdu de vue") & !is.na(outcome)))
+      
+  ) %>%
+  mutate(
+    period_art_init   = format(as.Date(art_start_date), "%Y-%m"),
+    quarter_art_init  = quarter(art_start_date,with_year = T)
+  ) %>%
+  select(
+    folder_number,date_of_birth,gender,art_start_date,prior_art,method_into_art,art_start_fold_format,last_art_visit_date,last_art_visit_code,last_art_cd4_date,last_art_cd4_count,
+    last_art_next_appointment_date,first_visit_date,last_art_vl_date,last_art_vl_count,last_art_prescription_code,last_art_prescription_date,facility,period_art_init)
+
+########################### TB DATA AND CD4 ####################################
+################################################################################
+cd4_data <- lab%>%
+  left_join(pat,"patient")%>%
+  select(patient,facility,lab_dmy,lab_id,lab_v,lab_t,gender,cohort,episode_id)%>%
+  filter(
+    lab_id=="CD4A" & (lab_dmy >=as.Date("2022/01/01") & lab_dmy <=as.Date("2022/03/31"))
+  ) %>%
+  mutate(
+    category_cd4 = case_when(
+      lab_v < 200 ~ "<200",
+      lab_v>=200  ~ ">=200"
+    ),
+    period = format(as.Date(lab_dmy), "%Y-%m")
+  )%>%
+  arrange(patient)
+
+
+#sum(duplicated(cd4_data$patient)==TRUE,na.rm = TRUE)
+cd4_summ<-cd4_data%>%
+  group_by(lab_id)%>%
+  summarise(
+    tot = n(),
+    cd4_lt_200 = sum(category_cd4 =="<200",na.rm = TRUE),
+    cd4_gt_200 = sum(category_cd4 ==">=200",na.rm = TRUE)
+  )
+
+
+tb_lam <- lab %>%
+  filter(
+    lab_id=="LAM" & (lab_dmy >=as.Date("2022/01/01") & lab_dmy <=as.Date("2022/03/31"))
+  ) %>%
+  mutate(
+    period = format(as.Date(lab_dmy), "%Y-%m")
+  )
+
+#Patients with CD4<200 and with TB LAM
+cd4_tblam <- cd4_data %>%
+  left_join(tb_lam,c("patient" ="patient","period"="period"))%>%
+  group_by(
+    facility
+  )%>%
+  summarise(
+    tot_cd4             = n(),
+    cd4_lt200           = sum(category_cd4=="<200",na.rm=TRUE),
+    tblam_cd4_lt200     = sum(category_cd4=="<200" & lab_id.y=="LAM",na.rm=TRUE),
+    tblam_pos           = sum(category_cd4=="<200" & lab_id.y=="LAM" & lab_t.y=="+",na.rm=TRUE),
+  )
+  
+  crag_lab <- lab %>%
+  filter(
+    lab_id=="CRAG" & (lab_dmy >=as.Date("2022/01/01") & lab_dmy <=as.Date("2022/03/31"))
+  )%>%
+  mutate(
+    period = format(as.Date(lab_dmy), "%Y-%m")
+  )
+  
+  cd4_crag<- cd4_data %>%
+  left_join(crag_lab,c("patient" ="patient","period" = "period"))%>%
+  group_by(
+    facility
+  )%>%
+  summarise(
+    tot_cd4             = n(),
+    cd4_lt200           = sum(category_cd4=="<200",na.rm=TRUE),
+    crag_cd4_lt200     = sum(category_cd4=="<200" & lab_id.y=="CRAG",na.rm=TRUE),
+    crag_pos           = sum(category_cd4=="<200" & lab_id.y=="CRAG" & lab_t.y=="+",na.rm=TRUE),
+  )
+  
+  vl_data <- lab %>%
+    filter(
+      lab_id=="RNA" & (lab_dmy >=as.Date("2022/01/01") & lab_dmy <=as.Date("2022/03/31"))
+  )%>%
+    filter(
+      !is.na(lab_v)
+    )%>%
+  mutate(
+    period = format(as.Date(lab_dmy), "%Y-%m")
+  ) %>%
+  left_join(pat,c("patient" ="patient"))%>%
+  filter(
+    #facility =="Ouango"
+  )%>%
+    group_by(
+      facility
+    )%>%
+  summarise(
+    total = n()
+  )
+    
+
+######################################### INITIATIONS #############################################
+""
+
+
+initiations <- export_tier %>%
+  mutate(
+    art_start_date_fold = substr(folder_number,(nchar(folder_number)-8+1),nchar(folder_number)),
+    period_art_init     = format(as.Date(art_start_date), "%Y-%m"),
+    quarter_art_init    = quarter(art_start_date,with_year = T)
+  )%>%
+  filter(
+    (as.Date(art_start_date) >=start_reporting_period & as.Date(art_start_date) <=end_reporting_period) & #Filter initiations in the period
+      (method_into_art == "Nouveau" & prior_art=="Aucun (naïf)") #Filter only new patients, excluding all transfers in and non naive patients
+  )%>%
+  select(
+    folder_number,date_of_birth,gender,art_start_date,prior_art,method_into_art,art_start_date_fold,art_start_fold_format,last_art_visit_date,last_art_visit_code,last_art_cd4_date,last_art_cd4_count,
+    last_art_next_appointment_date,first_visit_date,last_art_vl_date,last_art_vl_count,last_art_prescription_code,last_art_prescription_date,facility,period_art_init,quarter_art_init)%>%
+  select(
+     folder_number,date_of_birth,gender,art_start_date,prior_art,method_into_art,art_start_date_fold,art_start_fold_format,last_art_visit_date,last_art_visit_code,last_art_cd4_date,last_art_cd4_count,
+    last_art_next_appointment_date,first_visit_date,last_art_vl_date,last_art_vl_count,last_art_prescription_code,last_art_prescription_date,facility,period_art_init,quarter_art_init
+  ) %>%
+  mutate(
+    category_init = case_when(
+      is.na(art_start_fold_format) ~ "code_format_not_correct",
+      (art_start_fold_format>=start_reporting_period & art_start_fold_format<=end_reporting_period) ~ "start_meet_report_period",
+      (art_start_fold_format<start_reporting_period | art_start_fold_format>end_reporting_period) ~"start_out_report_period"
+    )
+  ) 
+  
+
+
+initiations_filter_month <- initiations %>%
+  group_by(facility,period_art_init)%>%
+  summarise(
+    total_art_init     = n(),
+    no_folder_art_date = sum(category_init=="code_format_not_correct",na.rm=TRUE), #No of patients whom art start date is not well defined
+    folder_art_date    = sum(category_init=="start_meet_report_period",na.rm = TRUE),#No patients whom art start date from folder number is between reporting period
+    folder_out_art_date= sum(category_init=="start_out_report_period",na.rm = TRUE) #No patients whom art start date from folder number is before art start date
+  ) %>%
+  adorn_totals()
+
+initiations_filter_quarter <- initiations_filter_month%>%
+  group_by(facility)%>%
+  summarise(
+    total_art_init       =  sum(total_art_init,na.rm = TRUE),
+    no_folder_art_date   = sum(no_folder_art_date,na.rm = TRUE),
+    folder_art_date      = sum(folder_art_date,na.rm = TRUE),
+    folder_out_art_date  = sum(folder_out_art_date,na.rm = TRUE),
+  )
+
+############################# CD4 DONE AT INITIATION ##########################
+cd4_initiations <-  initiations %>%
+  filter(
+    category_init == "start_meet_report_period" #Filter patients with code meeting art start date period
+  ) %>%
+  group_by(facility,quarter_art_init) %>%
+  summarise(
+    tot_art_init    = n(),
+    cd4_done        = sum((as.Date(last_art_cd4_date)>=start_reporting_period & as.Date(last_art_cd4_date)<=end_reporting_period),na.rm = TRUE), #Count CD4 done in the reporting period
+    cd4_lt_200      = sum(
+      (as.Date(last_art_cd4_date)>=start_reporting_period & as.Date(last_art_cd4_date)<=end_reporting_period) & last_art_cd4_count <200,na.rm = TRUE
+    )
+  )
+
+cd4_lt_200 <- export_tier %>%
+  filter((as.Date(last_art_cd4_date)>=start_reporting_period & as.Date(last_art_cd4_date)<=end_reporting_period))%>%
+  group_by(facility)%>%
+    summarise(
+      tot_cd4       = n(),
+      cd4_lt_200    = sum(last_art_cd4_count <200,na.rm = TRUE),
+      crag_cd4lt200 = sum((last_art_cd4_count <200) & !is.na(last_cr_ag_result), na.rm = TRUE),
+      crag_pos      =sum((last_art_cd4_count <200) & !is.na(last_cr_ag_result) & last_cr_ag_result=="Positif", na.rm = TRUE)
+    )
+
+head(initiations)
+# %>%
+#   group_by(facility,period_art_init)%>%
+#   summarise(
+#     total = n()
+#   )
+
+
+######################## 12M VIRAL LOAD CASCADE #############################
+
+start_date <-"2021/04/01"
+end_date   <-"2022/03/31"
+
+#excl_res_start_date <- "2021/04/01"
+#excl_res_end_date   <-"2021/12/31"
+
+arv_gt_12m<- file_active %>% #Patients in the active cohort and initiated for more than 12 months at the end of the current reporting period
+  filter( as.Date(art_start_date) <as.Date(start_date))
+
+# arv_gt_12m <- arv_gt_12m %>% #Patients initiated > 12M with no VL between -12M and CURRENT REPORTING PERIOD-3M
+#   filter(
+#     !(as.Date(last_art_vl_date) >=as.Date(excl_res_start_date) & as.Date(last_art_vl_date) <=as.Date(excl_res_end_date))
+#   )
+
+vis_12m <- arv_gt_12m %>% #Patients who visited in the last 12M
+  dplyr::filter(as.Date(last_art_visit_date) >=as.Date(start_date) & as.Date(last_art_visit_date) <=as.Date(end_date))
+
+vis_12m_grp <- vis_12m %>%
+  group_by(facility) %>%
+  summarise(
+    total = n()
+  )
+
+lab_results_12m <-lab%>%
+  filter(lab_id =="RNA" & lab_dmy>=as.Date(start_date) & lab_dmy <=as.Date(end_date))
+
+lab_results_month <-lab%>% #VL Lab results in Tier.net for the past 12M
+  filter(lab_id =="RNA" & lab_dmy>=as.Date(start_date) & lab_dmy <=as.Date(end_date)) %>%
+  mutate(
+    quarter_year = quarter(lab_dmy,with_year = T),
+    month_year   = format(as.Date(lab_dmy), "%Y-%m")
+  ) %>%
+  #filter(month_year == "2022-01")%>%
+  group_by(
+    month_year
+  ) %>%
+  summarise(
+    total = n()
+  )
+
+#lab_results_month[duplicated(lab_results_month$patient),]
+
+cv_12m <- vis_12m %>% #Cumulative No of Patients who have had atleast one VL in the last 12 month of the current reporting period
+  filter(
+    as.Date(last_art_vl_date) >=as.Date(start_date) & as.Date(last_art_vl_date) <=as.Date(end_date)
+  )
+
+cv_12m_grp <- cv_12m  %>%
+  group_by(facility) %>%
+  summarise(
+    total = n()
+  )
+
+cv_supp_12m <- cv_12m %>% # CV Suppressed
+  filter(last_art_vl_count <1000)
+
+cv_supp_12m_grp <-cv_supp_12m  %>%
+  group_by(facility) %>%
+  summarise(
+    total = n()
+  )
+
+
+summary_data <- 
+  data.frame(
+    end_date    = parse_date(end_date),
+    file_active = nrow(file_active),
+    arv_gt_12m  = nrow(arv_gt_12m),
+    vis_12m     = nrow(vis_12m),
+    cv_12m      = nrow(cv_12m),
+    cv_supp_12m = nrow(cv_supp_12m)
+  )
+summary_data
+
+######################## 3M VIRAL LOAD CASCADE #############################
+
+start_date_3m      <-"2021/09/01"
+end_date_3m        <-"2021/11/30"
+end_period_date_3m <-"2022/03/31"
+
+arv_init_3m<- file_active %>% #Patients in the active cohort and initiated for more thant 12 months at the end of the current reporting period
+  filter( 
+    as.Date(art_start_date) >=as.Date(start_date_3m) & as.Date(art_start_date) <=as.Date(end_date_3m) & #Initiations between 6M and 3M 
+      (method_into_art == "Nouveau" & prior_art=="Aucun (naïf)")
+    )%>%
+  mutate(
+    category_init = case_when(
+      is.na(art_start_fold_format) ~ "code_format_not_correct",
+      (art_start_fold_format>=start_date_3m & art_start_fold_format<=end_period_date_3m) ~ "start_meet_report_period",
+      (art_start_fold_format<start_date_3m | art_start_fold_format>end_period_date_3m) ~"start_out_report_period"
+    )
+  ) 
+
+vis_init_3m <- arv_init_3m %>% #Patients who visited in the last in the period and who are on DTG ==> Eligible
+  dplyr::filter(as.Date(last_art_visit_date) >=as.Date(start_date_3m) & as.Date(last_art_visit_date) <=as.Date(end_period_date_3m)&
+                  last_art_visit_code =="1T3O"
+                )
+
+
+vis_init_3m_filter_month <- vis_init_3m %>%
+  group_by(facility,period_art_init)%>%
+  summarise(
+    total_art_init     = n(),
+    no_folder_art_date = sum(category_init=="code_format_not_correct",na.rm=TRUE), #No of patients whom art start date is not well defined
+    folder_art_date    = sum(category_init=="start_meet_report_period",na.rm = TRUE),#No patients whom art start date from folder number is between reporting period
+    folder_out_art_date= sum(category_init=="start_out_report_period",na.rm = TRUE) #No patients whom art start date from folder number is before art start date
+  ) %>%
+  adorn_totals()
+
+vis_init_3m_filter_quarter <- vis_init_3m_filter_month%>%
+  group_by(facility)%>%
+  summarise(
+    total_art_init       =  sum(total_art_init,na.rm = TRUE),
+    no_folder_art_date   = sum(no_folder_art_date,na.rm = TRUE),
+    folder_art_date      = sum(folder_art_date,na.rm = TRUE),
+    folder_out_art_date  = sum(folder_out_art_date,na.rm = TRUE),
+  )
+
+
+
+
+
+cv_3m <- vis_init_3m %>% #Cumulative No of Patients who have had atleast one VL in the last 6 month of the current reporting period
+  filter(
+    as.Date(last_art_vl_date) >=as.Date(start_date_3m) & as.Date(last_art_vl_date) <=as.Date(end_period_date_3m) &
+      category_init == "start_meet_report_period" #Meeting art start criteria
+  )
+  
+
+cv_3m_grp <-cv_3m %>%
+  group_by(facility) %>%
+  summarise(
+    total = n()
+  )
+
+cv_supp_3m <- cv_3m %>% # CV Suppressed
+  filter(last_art_vl_count <1000)
+
+cv_supp_3m_grp <- cv_supp_3m %>%
+  group_by(facility) %>%
+  summarise(
+    total = n()
+  )
+
+summary_data_3m <- 
+  data.frame(
+    end_date    = parse_date(end_period_date_3m),
+    file_active = nrow(file_active),
+    arv_init_3m = nrow(arv_init_3m),
+    vis_init_3m = nrow(vis_init_3m),
+    cv_3m      = nrow(cv_3m),
+    cv_supp_3m = nrow(cv_supp_3m)
+  )
+summary_data_3m
+
+
+
+##################  CHUC Data Analysis ###############################
+
+
+bdd_chuc_raw <- read_excel(here(data_folder,"Database_BanguiVih_ChucDataBase_20220413.xlsx"))
+bdd_chuc<- bdd_chuc_raw%>% janitor::clean_names()
+bdd_chuc[is.null(bdd_chuc)  | bdd_chuc == "NULL" | bdd_chuc == ""] <- NA
+head(bdd_chuc)
+period_start_date <-as.Date("2022/01/01")
+period_end_date   <-as.Date("2022/03/31")
+
+#Discharges between Jan - Mar 2022
+bdd_chuc_sortie <-bdd_chuc %>% #Patient sortis durant la periode
+  filter(
+    as.Date(date_de_sortie) >=period_start_date & as.Date(date_de_sortie) <=period_end_date
+  ) %>%
+  mutate(
+    period_discharge =  format(as.Date(date_de_sortie), "%Y-%m")
+  ) 
+
+bdd_chuc_tb_init <-bdd_chuc_sortie %>% #Patient sortis durant la periode
+  filter(
+    as.Date(date_de_sortie) >=period_start_date & as.Date(date_de_sortie) <=period_end_date
+  ) %>%
+  mutate(
+    period_discharge =  format(as.Date(date_de_sortie), "%Y-%m")
+  ) %>%
+  filter( #Exclude patients under Tb traitement
+    examen_tb_lam != "Sous Traitement TB"
+  ) %>%
+  group_by(
+    period_discharge
+  ) %>%
+  summarise( #Caclulate variables
+    tb_diagn_hospi = sum(tb_diagnostiquee_en_hospit=="Oui",na.rm = TRUE),
+    tb_start_hospi = sum((tb_diagnostiquee_en_hospit=="Oui" & traitement_tb_commence == "Oui"),na.rm=TRUE),
+    tb_start_bact  = sum(tb_diagnostiquee_en_hospit=="Oui" & traitement_tb_commence == "Oui" & (examen_tb_lam =="Positif" | examen_tb_lam =="Négatif"),na.rm = TRUE),
+    tb_start_clin  = tb_start_hospi - tb_start_bact
+  )
+  
+############Cascade TB and Crypto #############################
+casc_crag_tb <- bdd_chuc_sortie%>%
+   filter(
+    as.Date(date_de_sortie) >=period_start_date & as.Date(date_de_sortie) <=period_end_date
+  ) %>%
+   group_by(
+    period_discharge
+  ) %>%summarise(
+    cd4_lt_200    = sum(valeur_cd4<200,na.rm = TRUE),
+    crag_done     = sum((valeur_cd4<200 & (cr_ag_sang=="Sang Nég" | cr_ag_sang=="Sang pos")),na.rm = TRUE),
+    sous_ttt_tb   = sum(examen_tb_lam == "Sous Traitement TB",na.rm = TRUE),
+    elig_tb_lam   = cd4_lt_200 - sous_ttt_tb,
+    tb_lam_done   = sum((valeur_cd4<200 & (examen_tb_lam =="Positif" | examen_tb_lam =="Négatif") & examen_tb_lam != "Sous Traitement TB"),na.rm = TRUE),
+    tb_lam_pos    = sum((valeur_cd4<200 & (examen_tb_lam =="Positif")),na.rm = TRUE),
+    tb_ttt_start  = sum((valeur_cd4<200 & (examen_tb_lam =="Positif") & traitement_tb_commence == "Oui"),na.rm = TRUE),
+    crag_pos      = sum((valeur_cd4<200 & (cr_ag_sang=="Sang pos")),na.rm = TRUE),
+    cryp_ttt_start= sum((valeur_cd4<200 & (cr_ag_sang=="Sang pos") & cryptococcique_o_n=="Oui"),na.rm = TRUE)
+  )
+
+
+################ Realisation Charge Virale en hospitalisation
+chuc_cv<-bdd_chuc_sortie %>%
+  mutate(
+    period_on_arv = interval(date_debut_arv,date_dadmission) %/% months(1)
+  ) %>%
+  select(date_dadmission,valeur_cd4,historique_arv,date_debut_arv,period_on_arv,valeur_cv,date_charge_virale,date_de_sortie,period_discharge) %>%
+  filter(
+    #valeur_cd4 <100 & historique_arv =="Sous ARV" 
+    #& period_on_arv >3
+  ) %>%
+  group_by(period_discharge) %>%
+  summarise(
+    total_cv     = sum(!is.na(valeur_cv)), #Total des patients ayant fait leurs CV durant l'hospitalisation
+    total_pat_cv = sum( #Patients eligibles a la charge Virale durant l'hospitalisation
+      #valeur_cd4 <100 & 
+      historique_arv =="Sous ARV"  & period_on_arv >3,
+      na.rm = TRUE
+      ),
+    cv_fait = sum( #Charges virales faites sur les eligibles
+      #valeur_cd4 <100 & 
+      historique_arv =="Sous ARV"  & period_on_arv >3 & !is.na(valeur_cv), #Eligible == CD4<100 & sous ARV
+      na.rm = TRUE
+    )
+  ) 
+
+chuc_cv
+
+```

@@ -13,16 +13,17 @@ pacman::p_load(
   here,       # relative file pathways
   readxl,     # read excel
   writexl,    # write excel
-  skimr,      # Exploring data
+  #skimr,      # Exploring data
   janitor,    # data cleaning and tables
   lubridate,  # working with dates
   epikit,     # age_categories() function
   tidyverse,  # data management and visualization,
-  gtsummary,  # summary statistics and tests,
-  rstatix,    # summary statistics and statistical tests
+  #gtsummary,  # summary statistics and tests,
+  #rstatix,    # summary statistics and statistical tests
   scales,     # easily convert proportions to percents  
   labelled,   # Variable and values labelling
-  flextable,  # Format tables
+  flextable,  # Format tables,
+  sqldf,      #sql queries
   RODBC       # Odbc database connection
 )
 
@@ -41,23 +42,27 @@ image_folder <- "images"
 output_folder <- "output"
 
 ###############################################################################
-#################   I. Importing & Exploring Data             #################
-###################   Version of Tier.net : 1.13.4          ###################
+#################   I. Importing & Exploring Data         #####################
+###################   Version of Tier.net : 1.13.4      #######################
 ###############################################################################
 
-con<-RODBC::odbcDriverConnect("Driver={Microsoft Access Driver (*.mdb)};DBQ=C:/Users/Gauthier Abdala/Documents/RWD/TierNet/Data/TierDES.mdb")
+```
+
+```{r setup, include=FALSE}
+
+con<-RODBC::odbcDriverConnect("Driver={Microsoft Access Driver (*.mdb)};DBQ=C:/Users/Gauthier Abdala/Documents/RWD/TierNet/data/TierDESBanguiEloge_20220422.mdb")
 
 vis_raw <- RODBC::sqlFetch(con,"VIS") #Follow Up clinic Visit table
 pat_raw <- RODBC::sqlFetch(con,"PAT") #Socio demographic char. & outcome table
 lab_raw <- RODBC::sqlFetch(con,"LAB") #Laboratory data table
 dem_raw <- RODBC::sqlFetch(con,"DEM") #Demographic information
 
-pregnancy_raw <- RODBC::sqlFetch(con,"PREGNANCY")  #Pregnancy information
+#pregnancy_raw <- RODBC::sqlFetch(con,"PREGNANCY")  #Pregnancy information
 tb_raw        <- RODBC::sqlFetch(con,"TB")         #Tuberculosis Information
 vis_tb_raw    <- RODBC::sqlFetch(con,"VIS_TB")     #TB Visit Table
 transfers_raw <- RODBC::sqlFetch(con,"TRANSFERS")  #Transfer In/Out Table
-vis_preg_raw  <- RODBC::sqlFetch(con,"VIS_PREG")   #Antenatal Care
-infant_raw    <- RODBC::sqlFetch(con,"INFANT")     #Labour and Delivery
+#vis_preg_raw  <- RODBC::sqlFetch(con,"VIS_PREG")   #Antenatal Care
+#infant_raw    <- RODBC::sqlFetch(con,"INFANT")     #Labour and Delivery
 
 
 #############################################################################
@@ -73,12 +78,12 @@ pat <- pat_raw %>% janitor::clean_names()
 lab <- lab_raw %>% janitor::clean_names()
 dem <- dem_raw %>% janitor::clean_names()
 
-pregnancy <- pregnancy_raw  %>% janitor::clean_names()
+#pregnancy <- pregnancy_raw  %>% janitor::clean_names()
 tb        <- tb_raw         %>% janitor::clean_names()
 vis_tb    <- vis_tb_raw     %>% janitor::clean_names()
 transfers <- transfers_raw  %>% janitor::clean_names()
-vis_preg  <- vis_preg_raw   %>% janitor::clean_names()
-infant    <- infant_raw     %>% janitor::clean_names()
+#vis_preg  <- vis_preg_raw   %>% janitor::clean_names()
+#infant    <- infant_raw     %>% janitor::clean_names()
 
 
 ####### 2. Select,add and/or re order/rename columns #######
@@ -218,8 +223,28 @@ transfers <- transfers %>%
 #   filter(transfer_dmy >as.Date("2017-12-31") & facility_from == "CH KABINDA")
 
 
+################ 5. Cleaning duplicate rows      #############
+##############################################################
+pat[duplicated(pat),]
+pat<-unique(pat)
 
-################# 5. Merge tables                   ##############
+vis_duplicate <-vis[duplicated(vis),]
+vis<-unique(vis)
+
+lab_duplicate <-lab[duplicated(lab),]
+lab<-unique(lab)
+#TODO Cleaning of lab data for same exame encoded same date, different values...
+
+tb_duplicate <-tb[duplicated(tb),]
+tb<-unique(tb)
+
+vis_tb_duplicate <-vis_tb[duplicated(vis_tb),]
+vis_tb<-unique(vis_tb)
+
+transfers_duplicate <-transfers[duplicated(transfers),]
+transfers<-unique(transfers)
+
+################# 5. Merge tables                #################
 ##################################################################
 vis_data <- left_join(vis,dem,"patient") %>%
   left_join(pat,"patient")
@@ -237,33 +262,56 @@ labelled::val_labels(vis_data$method_in_art_named) <-c("0" = "New", "1" = "Trans
 ```
 
 ```{r, include=FALSE}
+vis_2021<-vis_data %>%
+  mutate(
+   age_enr = (visit_dmy - birth_dmy) 
+  ) %>%
+  filter(
+    visit_dmy == frsvis_dmy & 
+    visit_dmy>=parse_date("2021-01-01","%Y-%m-%d") &
+    visit_dmy<=parse_date("2021-12-31","%Y-%m-%d") &
+    age_enr >= 540
+  )
+
+head(vis_2021)
+```
+
+```{r, include=FALSE}
 
 #############################################################################
-########################      II. Analyzing data    #########################
+##############      III. Analyzing data/presenting    #######################
 #############################################################################
 
-
-
-#Strictly including patients
 
 #Get visits for patients that date of visit = date of art start date
 
 
 #Q/ Do we need a time window for initiations or do we keep strict art_start_date==visit_date
 
+###################  NEW INITIATIONS   #########################
+################################################################
 new_initiations <- vis_data %>%
   filter( 
     #Filter patients that have visits in the reporting period
-    (visit_dmy >=as.Date("2021-01-01")) &  (visit_dmy <=as.Date("2021-03-31")) &
+    (visit_dmy >=as.Date("2021-01-01")) &  (visit_dmy <=as.Date("2021-12-31")) &
       #Only include patients for which dates of art start date = visit date
     (vis_data$haart_dmy == vis_data$visit_dmy)
-    )
+    ) %>%
+  arrange(visit_dmy)
+
+#Remove any duplicates from dataset
+new_initiations<- new_initiations[!duplicated(new_initiations$patient),]
 
 
+vis_last_10<-vis %>%
+  filter(
+    visit_dmy>as.Date("2011-12-31")
+  )
 
-#
+#Function to return last next appointment date for a patient
+#based on patient id and current visit
 last_next_app_fnc <- function(patient_id, curr_vis_date){
-  result <- vis %>%
+  result <- vis_last_10 %>%#Visit for the last 5 years
     filter(
       (patient == patient_id) &
       (visit_dmy < curr_vis_date) #Filter visits before current visit date
@@ -278,26 +326,49 @@ last_next_app_fnc <- function(patient_id, curr_vis_date){
 }
 
 
-#Patients who returned after missed appointment date > 90 days
-returnees <- vis_data %>%
+#######  Returnees after LTFU (>90 days after missed appointment  ########
+##########################################################################
+
+returnees_draft <- vis_data %>%
   filter( #Filter patients visits dates for the reporting period
     (visit_dmy >=as.Date("2021-01-01")) &  (visit_dmy <=as.Date("2021-03-31"))
+  )%>%
+  filter(
+    #Excludes transfers in and transfers out on the date of visit
+    !((visit_dmy == transfer_in_dmy & !is.na(transfer_in_dmy)) | #Transfers in
+    ((visit_dmy == outcome_dmy) & ((outcome =="30") |(outcome =="31")))) #30,31 transfers out
+  )
+
+#Q/ Disappeared then came back. After how long should we look back in time for patients?
+returnees <- vis_data %>%
+  filter( #Filter patients visits dates for the reporting period
+    (visit_dmy >=as.Date("2021-01-01")) &  (visit_dmy <=as.Date("2021-12-31"))
+  )%>%
+  filter(
+    #Excludes transfers in and transfers out on the date of visit
+    !((visit_dmy == transfer_in_dmy & !is.na(transfer_in_dmy)) | #Transfers in
+    ((visit_dmy == outcome_dmy) & ((outcome =="30") |(outcome =="31")))) #30,31 transfers out
   )%>%
   mutate( #Get last next appointment date
     last_next_app_date =  (map2(patient,visit_dmy,last_next_app_fnc))
     ) %>%
-  mutate( #Convert returned valued to date
+  mutate(
     last_next_app_date = as.Date(as.numeric(last_next_app_date),origin ="1970-01-01")
     ) %>%
-  filter( #Filter only lost to follow up visits
+  filter( #Filter only LTFU visits
     (visit_dmy - last_next_app_date) >90
   )%>%
+  arrange(#Sort data by visit date before removing duplicate patients
+    visit_dmy
+    )%>%
+  #distinct(#Only keep first appearance of the patient in reporting period to avoid double counting patients
+   # patient,.keep_all = TRUE
+  #)%>%
   relocate(
     #Move last_next_app_date column
     last_next_app_date, .before = visit_dmy 
-  )
+  ) 
 
-returnees
 
 #Function that returns the last vl date and value for a patient
 last_vl_fnc <- function(patient_id, curr_vis_date,test){
@@ -326,18 +397,17 @@ last_vl_fnc <- function(patient_id, curr_vis_date,test){
 #patient <-"2a288cce-65cc-459b-bac8-011255e6e7d6"
 patient <-"6cbacba9-5f18-41a8-879d-07b8582b4398"
 vis_date <-as.Date("2021-01-02")
-head(last_vl_fnc(patient,vis_date))
+head(last_vl_fnc(patient,vis_date,"RNA"))
 
 
 #High VL
 #######
-# Q/ Are we counting patients or visits?i.e. patient that came twice during
-# reporting period
+# Q/ We are counting visits(events) and not patients
 # Q/ How do we account for patients that did CD4 between reporting period and last High VL?
 #######
 high_vl <-vis_data %>%
   filter( #Filter patients visits dates for the reporting period
-    (visit_dmy >=as.Date("2021-01-01")) &  (visit_dmy <=as.Date("2021-03-31"))
+    (visit_dmy >=as.Date("2021-01-01")) &  (visit_dmy <=as.Date("2021-12-31"))
   ) %>%
   mutate( # Get last VL value and date
     last_vl = ((pmap_df(list(patient,visit_dmy,"RNA"),last_vl_fnc))) 
@@ -355,6 +425,11 @@ high_vl <-vis_data %>%
     (last_vl$lab_dmy - last_cd4$lab_dmy) > 90 | is.na(last_cd4$lab_dmy)
   )
 
+###################### CD4 LAB DATA ##############################
+##################################################################
+#A/ Given that in Tier.net we encode results dates for lab tests, we should have a time window check
+#TODO : Need to remove duplicates for CD4 data encoded twice for the same visit
+
 
 ###CD4 Lab Data
 lab_data_cd4 <-lab %>%
@@ -365,6 +440,43 @@ lab_data_cd4 <-lab %>%
       breakers = c(0,200,1000)
     )
   )
+
+
+
+
+vis_cd4 <- left_join(vis_data,lab_data_cd4,c("patient"="patient","visit_dmy"="lab_dmy"))
+
+###!!! Important to clarify CD4 time window (here +-7 days) based on result turnaround time and validity period before requesting
+###!!! If there exists two CD4 within the time window, which one to pick? Most recent one?
+
+vis_cd4_data <- sqldf(
+  "select vis.visit_dmy,vis.patient,vis.next_visit_dmy,vis.folder_number,vis.cohort,vis.facility,vis.birth_dmy,
+    vis.gender,vis.frsvis_dmy,vis.haart,vis.haart_dmy,vis.method_into_art,vis.tb_status,vis.transfer_in_dmy,vis.outcome,vis.outcome_dmy,lab.lab_dmy,lab.lab_v from vis_data vis
+    left join lab_data_cd4 lab 
+      on vis.patient = lab.patient and
+        lab.lab_dmy  between (vis.visit_dmy-7)  and (vis.visit_dmy + 7) 
+  "
+)%>%
+  rename(
+    cd4_date = lab_dmy,
+    cd4_value= lab_v
+  )
+  
+ 
+#Filter duplicate lab results based on CD4 lab date
+vis_cd4_data<-vis_cd4_data %>%
+  arrange(desc(cd4_date))
+
+vis_cd4_data<-vis_cd4_data[!duplicated(vis_cd4_data[,1:16]),]
+
+#Some duplicate visit data include
+#Visits with different lab dates based on time window, need to decide which one to pick (soonest maybe?)
+
+vis_cd4_data[!duplicated(vis_cd4_data[,1:16]),] %>%
+  arrange(patient)
+
+
+#Check if there were CD4 requested for the above patients
 
 
 ```
