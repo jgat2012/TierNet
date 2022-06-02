@@ -63,9 +63,9 @@ lab_raw <- RODBC::sqlFetch(con,"LAB") #Laboratory data table
 dem_raw <- RODBC::sqlFetch(con,"DEM") #Demographic information
 
 ###### Compare data ######
-summary(arsenal::comparedf(vis_raw_old,vis_raw,by=c("PATIENT","VISIT_DMY","VISIT_FAC")))
-summary(arsenal::comparedf(pat_raw_old,pat_raw,by=c("PATIENT","COHORT","FACILITY","BIRTH_DMY","GENDER")))
-summary(arsenal::comparedf(lab_raw_old,lab_raw,by=c("PATIENT","LAB_DMY","LAB_ID")))
+# summary(arsenal::comparedf(vis_raw_old,vis_raw,by=c("PATIENT","VISIT_DMY","VISIT_FAC")))
+# summary(arsenal::comparedf(pat_raw_old,pat_raw,by=c("PATIENT","COHORT","FACILITY","BIRTH_DMY","GENDER")))
+# summary(arsenal::comparedf(lab_raw_old,lab_raw,by=c("PATIENT","LAB_DMY","LAB_ID")))
 
 ##########################
 
@@ -92,7 +92,7 @@ pat <- pat_raw %>% janitor::clean_names()
 lab <- lab_raw %>% janitor::clean_names()
 dem <- dem_raw %>% janitor::clean_names()
 
-pregnancy <- pregnancy_raw  %>% janitor::clean_names()
+#pregnancy <- pregnancy_raw  %>% janitor::clean_names()
 tb        <- tb_raw         %>% janitor::clean_names()
 vis_tb    <- vis_tb_raw     %>% janitor::clean_names()
 transfers <- transfers_raw  %>% janitor::clean_names()

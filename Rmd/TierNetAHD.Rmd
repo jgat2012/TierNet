@@ -48,9 +48,9 @@ output_folder <- "output"
 
 ```
 
-```{r setup, include=FALSE}
+```{r, include=FALSE}
 
-con<-RODBC::odbcDriverConnect("Driver={Microsoft Access Driver (*.mdb)};DBQ=C:/Users/Gauthier Abdala/Documents/RWD/TierNet/data/TierDESBanguiEloge_20220422.mdb")
+con<-RODBC::odbcDriverConnect("Driver={Microsoft Access Driver (*.mdb)};DBQ=C:/Users/Gauthier Abdala/Documents/RWD/TierNet/data/TierDESKinshasa042022.mdb")
 
 vis_raw <- RODBC::sqlFetch(con,"VIS") #Follow Up clinic Visit table
 pat_raw <- RODBC::sqlFetch(con,"PAT") #Socio demographic char. & outcome table
@@ -252,31 +252,18 @@ vis_data <- left_join(vis,dem,"patient") %>%
 
 ################# 6. Add variables/values labels    ##############
 ##################################################################
-labelled::val_labels(vis_data$gender)  <-c("1" = "Male", "2" = "Female", "95" = NA, "99" = NA)
-labelled::val_labels(vis_data$haart)   <-c("0" = "Not on ART", "1" = "on ART")
-labelled::val_labels(vis_data$outcome) <-c("10"= "Deceased", "20" = "In care", "30" = "Transfered Out", "40" = "LTFU", "95" = "Unknown")
-labelled::val_labels(vis_data$method_in_art_named) <-c("0" = "New", "1" = "Transfer In", "88" = NA )
+# labelled::val_labels(vis_data$gender)  <-c("1" = "Male", "2" = "Female", "95" = NA, "99" = NA)
+# labelled::val_labels(vis_data$haart)   <-c("0" = "Not on ART", "1" = "on ART")
+# labelled::val_labels(vis_data$outcome) <-c("10"= "Deceased", "20" = "In care", "30" = "Transfered Out", "40" = "LTFU", "95" = "Unknown")
+# labelled::val_labels(vis_data$method_in_art_named) <-c("0" = "New", "1" = "Transfer In", "88" = NA )
 
 
 
 ```
 
-```{r, include=FALSE}
-vis_2021<-vis_data %>%
-  mutate(
-   age_enr = (visit_dmy - birth_dmy) 
-  ) %>%
-  filter(
-    visit_dmy == frsvis_dmy & 
-    visit_dmy>=parse_date("2021-01-01","%Y-%m-%d") &
-    visit_dmy<=parse_date("2021-12-31","%Y-%m-%d") &
-    age_enr >= 540
-  )
 
-head(vis_2021)
-```
 
-```{r, include=FALSE}
+```{r include=FALSE}
 
 #############################################################################
 ##############      III. Analyzing data/presenting    #######################
@@ -288,142 +275,6 @@ head(vis_2021)
 
 #Q/ Do we need a time window for initiations or do we keep strict art_start_date==visit_date
 
-###################  NEW INITIATIONS   #########################
-################################################################
-new_initiations <- vis_data %>%
-  filter( 
-    #Filter patients that have visits in the reporting period
-    (visit_dmy >=as.Date("2021-01-01")) &  (visit_dmy <=as.Date("2021-12-31")) &
-      #Only include patients for which dates of art start date = visit date
-    (vis_data$haart_dmy == vis_data$visit_dmy)
-    ) %>%
-  arrange(visit_dmy)
-
-#Remove any duplicates from dataset
-new_initiations<- new_initiations[!duplicated(new_initiations$patient),]
-
-
-vis_last_10<-vis %>%
-  filter(
-    visit_dmy>as.Date("2011-12-31")
-  )
-
-#Function to return last next appointment date for a patient
-#based on patient id and current visit
-last_next_app_fnc <- function(patient_id, curr_vis_date){
-  result <- vis_last_10 %>%#Visit for the last 5 years
-    filter(
-      (patient == patient_id) &
-      (visit_dmy < curr_vis_date) #Filter visits before current visit date
-    ) %>%
-    arrange(desc(visit_dmy)) %>% #Sort by date of visit
-    select(next_visit_dmy) %>% 
-    head(1) #Only get the first top visit
-
-  result <- ifelse(nrow(result)==0,NA,result)
-  value <- result[[1]]
-  return (value)
-}
-
-
-#######  Returnees after LTFU (>90 days after missed appointment  ########
-##########################################################################
-
-returnees_draft <- vis_data %>%
-  filter( #Filter patients visits dates for the reporting period
-    (visit_dmy >=as.Date("2021-01-01")) &  (visit_dmy <=as.Date("2021-03-31"))
-  )%>%
-  filter(
-    #Excludes transfers in and transfers out on the date of visit
-    !((visit_dmy == transfer_in_dmy & !is.na(transfer_in_dmy)) | #Transfers in
-    ((visit_dmy == outcome_dmy) & ((outcome =="30") |(outcome =="31")))) #30,31 transfers out
-  )
-
-#Q/ Disappeared then came back. After how long should we look back in time for patients?
-returnees <- vis_data %>%
-  filter( #Filter patients visits dates for the reporting period
-    (visit_dmy >=as.Date("2021-01-01")) &  (visit_dmy <=as.Date("2021-12-31"))
-  )%>%
-  filter(
-    #Excludes transfers in and transfers out on the date of visit
-    !((visit_dmy == transfer_in_dmy & !is.na(transfer_in_dmy)) | #Transfers in
-    ((visit_dmy == outcome_dmy) & ((outcome =="30") |(outcome =="31")))) #30,31 transfers out
-  )%>%
-  mutate( #Get last next appointment date
-    last_next_app_date =  (map2(patient,visit_dmy,last_next_app_fnc))
-    ) %>%
-  mutate(
-    last_next_app_date = as.Date(as.numeric(last_next_app_date),origin ="1970-01-01")
-    ) %>%
-  filter( #Filter only LTFU visits
-    (visit_dmy - last_next_app_date) >90
-  )%>%
-  arrange(#Sort data by visit date before removing duplicate patients
-    visit_dmy
-    )%>%
-  #distinct(#Only keep first appearance of the patient in reporting period to avoid double counting patients
-   # patient,.keep_all = TRUE
-  #)%>%
-  relocate(
-    #Move last_next_app_date column
-    last_next_app_date, .before = visit_dmy 
-  ) 
-
-
-#Function that returns the last vl date and value for a patient
-last_vl_fnc <- function(patient_id, curr_vis_date,test){
-  df <- data.frame(
-    lab_dmy = NA,
-    lab_v = NA
-  )
-  
-  result <- lab %>%
-    filter(
-      (patient == patient_id) &
-      (lab_dmy < curr_vis_date) & #Filter visits before current visit date
-      (lab_id  ==test) #Filter only VL results
-    ) %>%
-    arrange(desc(lab_dmy)) %>% #Sort by date of lab result
-    select(lab_dmy,lab_v) %>% 
-    head(1) #Only get the first top visit
-  
-  if(nrow(result)>0){
-    df<-result
-  }
-  
-  return ((df))
-}
-
-#patient <-"2a288cce-65cc-459b-bac8-011255e6e7d6"
-patient <-"6cbacba9-5f18-41a8-879d-07b8582b4398"
-vis_date <-as.Date("2021-01-02")
-head(last_vl_fnc(patient,vis_date,"RNA"))
-
-
-#High VL
-#######
-# Q/ We are counting visits(events) and not patients
-# Q/ How do we account for patients that did CD4 between reporting period and last High VL?
-#######
-high_vl <-vis_data %>%
-  filter( #Filter patients visits dates for the reporting period
-    (visit_dmy >=as.Date("2021-01-01")) &  (visit_dmy <=as.Date("2021-12-31"))
-  ) %>%
-  mutate( # Get last VL value and date
-    last_vl = ((pmap_df(list(patient,visit_dmy,"RNA"),last_vl_fnc))) 
-  ) %>%
-  filter( # Fitler only visits that had VL > 1000
-    last_vl$lab_v > 1000
-  ) %>%
-  mutate( # Get last CD4 done
-    last_cd4 = ((pmap_df(list(patient,visit_dmy,"CD4A"),last_vl_fnc))) 
-  ) %>% 
-  mutate( #Add column for time difference between last vl and last CD4
-    diff = last_vl$lab_dmy - last_cd4$lab_dmy
-  ) %>%
-  filter(
-    (last_vl$lab_dmy - last_cd4$lab_dmy) > 90 | is.na(last_cd4$lab_dmy)
-  )
 
 ###################### CD4 LAB DATA ##############################
 ##################################################################
@@ -444,14 +295,14 @@ lab_data_cd4 <-lab %>%
 
 
 
-vis_cd4 <- left_join(vis_data,lab_data_cd4,c("patient"="patient","visit_dmy"="lab_dmy"))
+#vis_cd4 <- left_join(vis_data,lab_data_cd4,c("patient"="patient","visit_dmy"="lab_dmy"))
 
 ###!!! Important to clarify CD4 time window (here +-7 days) based on result turnaround time and validity period before requesting
 ###!!! If there exists two CD4 within the time window, which one to pick? Most recent one?
 
-vis_cd4_data <- sqldf(
+vis_cd4 <- sqldf(
   "select vis.visit_dmy,vis.patient,vis.next_visit_dmy,vis.folder_number,vis.cohort,vis.facility,vis.birth_dmy,
-    vis.gender,vis.frsvis_dmy,vis.haart,vis.haart_dmy,vis.method_into_art,vis.tb_status,vis.transfer_in_dmy,vis.outcome,vis.outcome_dmy,lab.lab_dmy,lab.lab_v from vis_data vis
+    vis.gender,vis.frsvis_dmy,vis.haart,vis.haart_dmy,vis.method_into_art,vis.tb_status,vis.transfer_in_dmy,vis.outcome,vis.outcome_dmy,lab.lab_dmy,lab.lab_v,lab.cd4_category from vis_data vis
     left join lab_data_cd4 lab 
       on vis.patient = lab.patient and
         lab.lab_dmy  between (vis.visit_dmy-7)  and (vis.visit_dmy + 7) 
@@ -464,20 +315,503 @@ vis_cd4_data <- sqldf(
   
  
 #Filter duplicate lab results based on CD4 lab date
-vis_cd4_data<-vis_cd4_data %>%
+vis_cd4<-vis_cd4 %>%
   arrange(desc(cd4_date))
 
-vis_cd4_data<-vis_cd4_data[!duplicated(vis_cd4_data[,1:16]),]
+#Unique visits
+#vis_cd4_data_dup<-vis_cd4[duplicated(vis_cd4[,1:16]),]
+vis_cd4_data<-vis_cd4[!duplicated(vis_cd4[,1:16]),]
 
 #Some duplicate visit data include
 #Visits with different lab dates based on time window, need to decide which one to pick (soonest maybe?)
+# 
+# vis_cd4_data[!duplicated(vis_cd4_data[,1:16]),] %>%
+#   arrange(patient)
 
-vis_cd4_data[!duplicated(vis_cd4_data[,1:16]),] %>%
-  arrange(patient)
+###################### CRAG LAB DATA ##############################
+##################################################################
+
+lab_data_crag <-lab %>%
+  filter((lab_id =="CRAG") & !is.na(lab_t)) 
+
+vis_cd4_crag <- sqldf(
+  "select cd4d.*,crag.lab_dmy,crag.lab_t
+    from vis_cd4_data cd4d
+    left join lab_data_crag crag
+      on cd4d.patient = crag.patient
+        and crag.lab_dmy between(cd4d.cd4_date -7) and(cd4d.cd4_date +7)
+  "
+)%>%
+  rename(
+    crag_date = lab_dmy,
+    crag_value= lab_t
+  )
+
+vis_cd4_crag<-vis_cd4_crag %>%
+  arrange(desc(crag_date))
+
+#Unique visits
+#vis_cd4_crag_data_dup<-vis_cd4_crag[duplicated(vis_cd4_crag[,1:19]),]
+vis_cd4_crag_data<-vis_cd4_crag[!duplicated(vis_cd4_crag[,1:19]),]
 
 
-#Check if there were CD4 requested for the above patients
+###################### TBLAM LAB DATA ##############################
+####################################################################
 
+lab_data_tblam <-lab %>%
+  filter((lab_id =="LAM") & !is.na(lab_t)) 
+
+vis_cd4_crag_tbm <- sqldf(
+  "select cd4crag.*,tb.lab_dmy,tb.lab_t
+    from vis_cd4_crag_data cd4crag
+    left join lab_data_tblam tb
+      on cd4crag.patient = tb.patient
+        and tb.lab_dmy between(cd4crag.cd4_date -7) and(cd4crag.cd4_date +7)
+  "
+)%>%
+  rename(
+    tbm_date = lab_dmy,
+    tbm_value= lab_t
+  )
+
+vis_cd4_crag_tbm<-vis_cd4_crag_tbm %>%
+  arrange(desc(tbm_date))
+
+#Unique visits
+#vis_cd4_crag_tbm_data_dup<-vis_cd4_crag_tbm[duplicated(vis_cd4_crag_tbm[,1:21]),]
+vis_cd4_crag_tbm_data<-vis_cd4_crag_tbm[!duplicated(vis_cd4_crag_tbm[,1:21]),]
+
+
+###################### LAST VL DATA #################################
+#####################################################################
+
+lab_data_vl <-lab %>%
+  filter((lab_id =="RNA") & !is.na(lab_v))
+
+#Get last VL up to 15 months(390 days) before current visit
+#Assumption: Patient under care should have VL atleast once a year
+vis_cd4_crag_tbm_lvl<-sqldf(
+  "select data.*,vl.lab_dmy,vl.lab_v
+    from vis_cd4_crag_tbm_data data
+    left join lab_data_vl vl
+      on data.patient = vl.patient
+        and vl.lab_dmy between (data.visit_dmy -390) and (data.visit_dmy -1)"
+)%>%
+  rename(
+    lastvl_date = lab_dmy,
+    lastvl_value= lab_v
+  )
+
+vis_cd4_crag_tbm_lvl<-vis_cd4_crag_tbm_lvl %>%
+  arrange(desc(lastvl_date))
+
+#Unique visits
+#vis_cd4_crag_tbm_lvl_data_dup<-vis_cd4_crag_tbm_lvl[duplicated(vis_cd4_crag_tbm_lvl[,1:23]),]
+vis_cd4_crag_tbm_lvl_data<-vis_cd4_crag_tbm_lvl[!duplicated(vis_cd4_crag_tbm_lvl[,1:23]),]
+
+
+###################### LAST CD4 DATA #################################
+######################################################################
+
+#Get last CD4 for patient
+#Assumption: CD4 within 3 months of current visit may still be valid
+
+vis_cd4_crag_tbm_lvl_l3cd4<-sqldf(
+  "
+    select data.*,cd4.lab_dmy,cd4.lab_v
+    from vis_cd4_crag_tbm_lvl_data data
+    left join lab_data_cd4 cd4
+      on data.patient = cd4.patient
+        and cd4.lab_dmy between (data.visit_dmy -90) and (data.visit_dmy-1)
+  "
+)%>%
+  rename(
+    last3cd4_date = lab_dmy,
+    last3cd4_value= lab_v
+  )
+
+vis_cd4_crag_tbm_lvl_l3cd4<-vis_cd4_crag_tbm_lvl_l3cd4 %>%
+  arrange(desc(last3cd4_date))
+
+#Unique visits
+#vis_cd4_crag_tbm_lvl_l3cd4_data_dup<-vis_cd4_crag_tbm_lvl_l3cd4[duplicated(vis_cd4_crag_tbm_lvl_l3cd4[,1:25]),]
+vis_cd4_crag_tbm_lvl_l3cd4_data<-vis_cd4_crag_tbm_lvl_l3cd4[!duplicated(vis_cd4_crag_tbm_lvl_l3cd4[,1:25]),]
+
+
+################## LAST NEXT APPOINTMENT DATA ########################
+######################################################################
+
+vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_data <- vis_cd4_crag_tbm_lvl_l3cd4_data %>%
+  arrange(patient,visit_dmy)%>%
+  group_by(patient) %>%
+  mutate(# Get previous last next appointment and missed appointment days for patient
+    last_next_app = lag(next_visit_dmy),
+    miss_app_days = visit_dmy - last_next_app
+  ) %>%
+  select(last_next_app,visit_dmy,miss_app_days,everything())
+
+
+########################## TRANSFER DATA #############################
+######################################################################
+#Add Transfers information to visit data
+vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans <-vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_data%>%
+  left_join(transfers,c("patient"="patient","visit_dmy"="transfer_dmy"))
+
+vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans<-vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans %>%
+  arrange(desc(visit_dmy))%>%
+  #Move episode_id at the end
+  relocate(episode_id,.after = last_col())
+
+#Remove duplicate lines for transfers
+#vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans_data_dup<-vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans[duplicated(vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans[,1:31]),]
+#Note: This will include transfers in and transfers out that happened the same day as two separate lines
+vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans_data<-vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans[!duplicated(vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans[,1:31]),]
+
+#Adding a transfer category, transfer in or out
+vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans_data<- vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans_data%>%
+  mutate(
+    trans_cat = case_when(
+      mapply(identical,facility,facility_from)  ~ "transfer out",
+      mapply(identical,facility,facility_to)  ~ "transfer in",
+      TRUE ~ ""
+    )
+  )
+```
+
+##ELIGIBILITY CRITERIA
+Note: It is important to note that some of the below eligibility criteria are not mutually exclusive, meaning a patient can belong to more than one eligibility criteria. As example, a patient can be returnee and has a high last VL. Important to clarify the order.  
+-- Patients are considered and not visits events, meaning only first occurence of patient in the reporting period is considered
+In the meantime, the following are assumptions for the eligibility:
+New initiations : Patients who are starting ART 
+  Exclusion : Transfers In
+Returnees : Patients who are returning to care after being LTFUP (exact duration depends on settings/projects/countries)
+High VL: Patients who visit the facility after having a high VL  
+  Exclusion : Returnees
+
+```{r INCLUDE=FALSE, fig.width=7.0}
+
+######################################################################
+####################### ELIBILITY CRITERIA ###########################
+######################################################################
+
+
+
+start_period <-as.Date("2021/01/01")
+end_period <-as.Date("2021/12/31")
+pat_col_ind <- 4 #Patient column index in the data frame
+days_ltfup <-90 #This can be context specific
+
+vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans_data <- vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans_data %>%
+  mutate(
+    vis_quarter_year = quarter(visit_dmy, with_year = T),
+    vis_month_year   = format(as.Date(visit_dmy), "%Y-%m"),
+  )
+
+#Add category for the eligibility criteria
+vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans_data<-vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans_data%>%
+  mutate(
+   elig_cat = case_when(
+     visit_dmy == haart_dmy & method_into_art == 0 ~ "Initiations",
+     
+   ) 
+  )
+
+
+############################  PATIENTS WITH NO CD4   ###########################
+################################################################################
+#Q/ What time window between enrolment in cohort vs check for CD4?
+#Joining patient table and lab table(CD4), then filter only patients with no CD4
+
+#A/ Eligibility : Patients on ART for >=12M at start of reporting period and are still in care
+
+no_cd4_pat <- sqldf(
+  #Patient registered in Tier but have never had a CD4
+  "
+    select pat.*
+    from pat
+    where pat.patient not in (
+      select patient from lab where lab_id ='CD4A'
+    )
+  "
+) %>%
+  filter(
+    #Filter patients still active in care
+    outcome=="20" &
+      #Filter patients who started ART before end of reporting period and are on ART for more than 1 year
+    (start_period - haart_dmy) >=365 #Difference report start >=12M
+  )
+#Join with visit table to get patient visits
+no_cd4_pat<-no_cd4_pat %>%
+  left_join(
+    vis,c("patient" = "patient")
+  ) %>%
+  arrange(desc(visit_dmy))
+
+#Keep only latest visit for each patient
+no_cd4_pat_data<-no_cd4_pat[!duplicated(no_cd4_pat[,1:15]),]
+no_cd4_pat_data %>%
+  rename(#Renaming columns
+    "lat_vis_dmy"      = visit_dmy,
+    "lat_next_app_dmy" = next_visit_dmy
+  )
+
+
+
+###########################  NEW INITIATIONS   #################################
+################################################################################
+
+
+
+#Filter visits that happen on ART Start Date (new art initiations) and new patients (not transfers in)
+new_art_initiations <-vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans_data %>%
+  filter( 
+    visit_dmy == haart_dmy & method_into_art == 0
+  )
+
+
+art_casc <-vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans_data %>%
+  filter(visit_dmy>=start_period & visit_dmy<=end_period)%>%
+   mutate(
+    quarter_year = quarter(visit_dmy, with_year = T),
+    month_year   = format(as.Date(visit_dmy), "%Y-%m"),
+  )%>%
+  
+  group_by(quarter_year,facility)%>%
+  summarise(
+    tot_vis       = n(),
+    tot_cd4       = sum(!is.na(cd4_value),na.rm = TRUE),
+    tot_in        = sum(visit_dmy == haart_dmy & method_into_art == 0,na.rm = TRUE),
+    cd4_in        = sum(visit_dmy == haart_dmy & method_into_art == 0 & !is.na(cd4_value),na.rm = TRUE),
+    `% cd4_in`    = round((cd4_in/tot_in),4)*100,
+    tot_cd4_lt200 = sum(cd4_value<200,na.rm = TRUE), #Tot CD4 < 200
+    cd4_lt200_in  = sum(visit_dmy == haart_dmy & method_into_art == 0 & !is.na(cd4_value) & cd4_value<200,na.rm = TRUE), #Tot CD4 < 200
+    cd4_lt200_oth = sum(!(visit_dmy == haart_dmy & method_into_art == 0) & !is.na(cd4_value) & cd4_value<200,na.rm = TRUE),
+    tot_lam       = sum(cd4_value<200 & !is.na(tbm_value),na.rm = TRUE),
+    `%tot_lam`    = round((tot_lam/tot_cd4_lt200),4)*100,
+    lam_in        = sum(visit_dmy == haart_dmy & method_into_art == 0 & !is.na(cd4_value) & cd4_value<200 & !is.na(tbm_value),na.rm = TRUE),
+    `%lam_in`     = round((lam_in/cd4_lt200_in),4)*100,
+    tot_crag      = sum(cd4_value<200 & !is.na(crag_value),na.rm = TRUE),
+    `%tot_crag`   = round((tot_crag/tot_cd4_lt200),4)*100,
+    crag_in       = sum(visit_dmy == haart_dmy & method_into_art == 0 & !is.na(cd4_value) & cd4_value<200 & !is.na(crag_value),na.rm = TRUE),
+    `%crag_in`    = round((crag_in/cd4_lt200_in),4)*100,
+    lam_pos       = sum(cd4_value<200 & !is.na(tbm_value) & (tbm_value=="+"),na.rm = TRUE),
+    `%lam_pos`    = round((lam_pos/tot_lam),4)*100,
+    crag_pos      = sum(cd4_value<200 & !is.na(tbm_value) & (crag_value=="+"),na.rm = TRUE),
+    `%crag_pos`   = round((crag_pos/tot_crag),4)*100,
+  )# %>%
+  #adorn_totals()
+
+
+###################################  RETURNEES   ###############################
+################################################################################
+#Def: These are people who have been LTFUP and are coming back to care
+
+
+returnees<- vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans_data %>%
+  filter(
+    (visit_dmy>=start_period & visit_dmy<=end_period)
+    & miss_app_days >days_ltfup)
+  
+#Filter to get unique patients in reporting period
+#Get first occurrence of patient in reporting period
+returnees <-returnees%>%
+  arrange(patient,visit_dmy)
+
+returnees_dup <-returnees[duplicated(returnees[,4]),]
+returnees_data<-returnees[!duplicated(returnees[,4]),]
+
+returnees_casc<-returnees_data%>%
+  #Exclude initiations that might be part of the data (cross checking for data quality)
+  filter( 
+    !(visit_dmy == haart_dmy & method_into_art == 0)
+  )%>%
+  #Exclude patients who do not currently have a CD4 but have valid CD4 (<=3M)
+  filter(
+    !(is.na(cd4_value) & !is.na(last3cd4_value))
+  )%>%
+  mutate(
+    quarter_year = quarter(visit_dmy, with_year = T),
+    month_year   = format(as.Date(visit_dmy), "%Y-%m"),
+  )%>%
+  group_by(quarter_year)%>%
+  summarise(
+    tot_hvl        = n(),
+    cd4_hvl        = sum(!is.na(cd4_value)),
+    `% cd4_hvl`    = round((cd4_hvl/tot_hvl),4)*100,
+  )
+
+
+#############################  HIGH VIRAL LOAD   ###############################
+################################################################################
+
+#Visits with last High VL
+
+#Q/ Consider people with valid CD4 as still part of the cascade for tblam and crag
+
+
+high_vl <-vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans_data %>%
+  filter(lastvl_value >=1000) %>%
+  arrange(patient,visit_dmy)
+
+#Unique patients
+high_vl_dup<-high_vl[duplicated(high_vl[,pat_col_ind]),]
+high_vl_data<-high_vl[!duplicated(high_vl[,pat_col_ind]),]
+#Get first occurrence of patient in reporting period
+#Q/What happens if you had two high VL in same reporting period?
+
+
+high_vl_casc<-high_vl_data%>%
+  #Exclude initiations that might be part of the data (cross checking for data quality)
+  filter( 
+    !(visit_dmy == haart_dmy & method_into_art == 0)
+  )%>%
+  #Exclude patients who do not currently have a CD4 but have valid CD4 (<=3M)
+  filter(
+    !(is.na(cd4_value) & !is.na(last3cd4_value))
+  )%>%
+  mutate(
+    quarter_year = quarter(visit_dmy, with_year = T),
+    month_year   = format(as.Date(visit_dmy), "%Y-%m"),
+  )%>%
+  group_by(quarter_year)%>%
+  summarise(
+    tot_hvl        = n(),
+    cd4_hvl        = sum(!is.na(cd4_value)),
+    `% cd4_hvl`    = round((cd4_hvl/tot_hvl),4)*100,
+  )
+
+
+################### ELIGIBILITY FOR CD4 AND CD4 DONE ###########################
+################################################################################
+
+#Data for a year,show of trends
+art_casc_sum1 <-art_casc%>%
+  mutate(
+    not_cd4_in = tot_in - cd4_in
+  )%>%
+  pivot_longer(cols=c(not_cd4_in,cd4_in))
+
+art_casc_sum1 %>%
+  mutate(
+    name = factor(name,levels=c("not_cd4_in","cd4_in"))
+  )%>%
+  ggplot()+
+  geom_bar(
+    aes(x=month_year,y=value,fill=name),
+    stat="identity",
+    color = "#661a00"
+  )+theme(
+    #aspect.ratio = 1.3,
+    legend.position = "bottom",
+    axis.text.x = element_text(angle = 65,hjust = 1.0),
+    legend.title = element_blank(),
+  )+labs(
+    title = "CD4 Done among new ART initiations, 2021",
+    x = "Periode",
+    y="Total"
+  )+
+  scale_fill_discrete(
+    labels=c("","CD4 Done")
+    )
+
+#At a specific point in time
+art_casc_sum2 <-art_casc%>%
+ 
+  rename(
+    "Eligible" = tot_in,
+    "CD4 done" = cd4_in,
+    "CD4 < 200"= cd4_lt200_in
+  ) %>%
+  pivot_longer(cols=c(`Eligible`,`CD4 done`,`CD4 < 200`))%>%
+  mutate(
+    name = factor(name,levels=c("Eligible","CD4 done","CD4 < 200"))
+  )%>%
+  mutate(
+    category="ART Initiation"
+  )
+
+art_casc_sum2%>%
+  ggplot()+
+  geom_bar(
+    aes(x=name,y=value,fill=category),
+    stat="identity"
+  )+theme(
+    aspect.ratio = 0.8,
+    #legend.position = "bottom",
+    #axis.text.x = element_text(angle = 65,hjust = 1.0),
+    legend.title = element_blank(),
+  )+labs(
+    title = "CD4 done by eligibility criteria, 2021",
+    y="Total"
+  )
+  
+
+
+```
+
+
+```{e INCLUDE=FALSE}
+
+########################### RETURNEES   ##############################
+######################################################################
+#Outcome : 10, Death(HIV Related), 11: Death (HIV relationship unknown), 20: Alive and in care, 30,31: Transfers out
+#40,41: LTFUP, 95: Not ascertained
+
+#Function to return last next appointment date for a patient
+#based on patient id and current visit
+last_next_app_fnc <- function(patient_id, curr_vis_date){
+  
+  vis_dmy  <- as.Date(curr_vis_date)
+  vis_dmy_2<- seq(vis_dmy, length=2, by="-2 years")[2] #Two years from current visit
+
+  
+  result <- vis_cd4_crag_tbm_data %>%#Visit for the last 5 years
+    filter(
+      (patient == patient_id) &
+      (visit_dmy < curr_vis_date &  visit_dmy >=vis_dmy_2) #Filter visits before current visit date up to 2 years ago
+    ) %>%
+    arrange(desc(visit_dmy)) %>% #Sort by date of visit
+    select(next_visit_dmy) %>% 
+    head(1) #Only get the first top visit
+
+  result <- ifelse(nrow(result)==0,NA,result)
+  value <- result[[1]]
+  return (value)
+}
+
+
+eligible_vis <- vis_cd4_crag_tbm_data %>%
+  filter(
+    visit_dmy >=as.Date("2021/01/01") & visit_dmy <=as.Date("2021/12/31")
+  )%>%
+  left_join(transfers,
+            c("patient" = "patient", "visit_dmy" = "transfer_dmy")) %>%
+  filter(#Excludes all transfers (in and out)
+    is.na (facility_from)) %>% 
+  mutate(#Get last next appointment date
+    last_next_app_date =  (map2(patient, visit_dmy, last_next_app_fnc)))
+    
+
+# eligible_vis_data <- sqldf(
+#   "select el.* from eligible_vis el
+#     left join (select max(vis.visit_dmy) as last_app_date
+#                   from vis_cd4_crag_tbm_data vis
+#                     where vis.patient = el.patient and vis.visit_dmy <el.visit_dmy)  
+#   "
+# )
+# 
+# mysql <-sqldf(
+#   "select max(vis.visit_dmy) as last_app_date
+#                   from vis_cd4_crag_tbm_data vis
+#                     where vis.patient = '11ec5d34-78ed-41c9-b156-49d2140fda47' and vis.visit_dmy < '04/03/2020'
+#   "
+# ) 
+
+vis_dmy  <- as.Date("2022/01/01")
+  vis_dmy_2<- seq(vis_dmy, length=2, by="-14 month")[2] 
+  vis_dmy_2
+  
+  
 
 ```
 
