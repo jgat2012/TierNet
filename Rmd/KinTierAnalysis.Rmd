@@ -315,11 +315,31 @@ cp_trans_data <- trans_data %>%
     enrol_quarter= quarter(enrolment_date, with_year = T),
     enrol_year = year(enrolment_date)
   )%>%
+  
   #filter(enrolment_date>=cp_start_date & enrolment_date<=cp_end_date)%>%
   #Get CP patients from CHK (Both Converted CP from CHK and new CP patients)
   filter(
     (startsWith(folder_number,"CP") | endsWith(folder_number,"/CP")) 
     & facility =="CH KABINDA"
+  ) %>%
+  mutate(
+    trans_cat = case_when(
+      mapply(identical,facility_from,facility_to) & method_into_art =="1" ~ "transfer in",
+      mapply(identical,facility,facility_from)  ~ "transfer out",
+      mapply(identical,facility,facility_to) ~ "transfer in",
+      TRUE ~ ""
+    )
+  ) %>%
+  relocate(transfer_dmy, .after = last_col())%>% #Move variable to be last
+  mutate(
+    #Calculate period after which patient got transferred out after enrollment period
+    trans_out_after = interval(enrolment_date,transfer_dmy) %/% days(1) / (365/12),
+    out_aft_cat = case_when(
+      trans_out_after>0 & trans_out_after <=6 ~  "0-6M",
+      trans_out_after>6 & trans_out_after <=12 ~ "6-12M",
+      trans_out_after>12 ~ ">12M",
+      TRUE ~ ""
+    )
   )
 
 
@@ -455,6 +475,10 @@ cp_diff <- cp_pat %>%
   filter(method_into_art =="1" & haart_dmy != transfer_in_dmy)
 
 ### TRANSFERS 
+cp_trans_data<- cp_trans_data %>%
+  mutate(
+    
+  )
 
 ## Get Transfers data for HIV only
 cp_trans_data_hiv %>% cp_trans_data %>%
