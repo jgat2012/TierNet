@@ -291,24 +291,44 @@ cp_pat <-patient_full%>%
   )
 
 cp_vis_data   <- vis_data %>%
+  mutate(
+    enrolment_date = case_when(
+      method_into_art =="1" ~ transfer_in_dmy,
+      method_into_art =="0" ~ haart_dmy 
+    ),
+    enrol_quarter= quarter(enrolment_date, with_year = T),
+    enrol_year = year(enrolment_date)
+  )%>%
+  #filter(visit_dmy>=cp_start_date & visit_dmy<=cp_end_date)%>%
   #Get CP patients visits from CHK (Both Converted CP from CHK and new CP patients)
   filter(
     (startsWith(folder_number,"CP") | endsWith(folder_number,"/CP")) 
     & facility =="CH KABINDA"
   )
+
 cp_trans_data <- trans_data %>%
+  mutate(
+    enrolment_date = case_when(
+      method_into_art =="1" ~ transfer_in_dmy,
+      method_into_art =="0" ~ haart_dmy 
+    ),
+    enrol_quarter= quarter(enrolment_date, with_year = T),
+    enrol_year = year(enrolment_date)
+  )%>%
+  #filter(enrolment_date>=cp_start_date & enrolment_date<=cp_end_date)%>%
   #Get CP patients from CHK (Both Converted CP from CHK and new CP patients)
   filter(
     (startsWith(folder_number,"CP") | endsWith(folder_number,"/CP")) 
     & facility =="CH KABINDA"
   )
 
-#Proportion of Transfers In vs New Patients in CP patients
 
 
+#### Enrollment data ####
 
 #Q/ How do we define new vs transfer in patients when it comes to CP patients?
 
+## Proportion of new patients and transfers in enrollment over time
 
 prop_cp_patient_meth_art <-cp_pat %>%
   #filter(method_into_art==0)%>%
@@ -358,51 +378,100 @@ prop_cp_patient_meth_art%>%
 
 
 
+enrol_per_year <- cp_pat %>%
+  mutate(
+    enrol_year = year(enrolment_date)
+  ) %>%
+  group_by(enrol_year)%>%
+  summarise(
+    total = n()
+  )
 
+cp_sum_enr <- cp_pat%>%
+  mutate(
+    enrol_year = year(enrolment_date)
+  ) %>%
+  group_by(enrol_year)%>%
+  summarise(
+    trans_art_lt_transin = sum((haart_dmy  < transfer_in_dmy),na.rm = TRUE),
+    trans_pat            = sum(method_into_art=="1",na.rm = TRUE),
+    new_frsv_lt_haart    = sum((frsvis_dmy < haart_dmy),na.rm = TRUE),
+    new_pat              = sum((method_into_art =="0"),na.rm = TRUE),
+    new_frsv_blank       = sum(is.na(frsvis_dmy) & method_into_art=="0",na.rm = TRUE),
+    
+  )
 
+#### Patients in Care####
+cp_year_rep_start <- cp_start_date %m-% months(3) #Cohort starting reporting period
+cp_year_rep_end   <- cp_end_date   %m-% months(3) #Cohort ending reporting period
+
+## Get patients last next appointments to determine lost to follow ups
+
+cp_vis_last_nextapp_data <- cp_vis_data%>%
+  arrange(patient,visit_dmy)%>%
+  group_by(patient) %>%
+  mutate(# Get previous last next appointment and missed appointment days for patient
+    last_next_app = lag(next_visit_dmy),
+    miss_app_days = visit_dmy - last_next_app
+  ) %>%
+  select(last_next_app,visit_dmy,miss_app_days,everything())
+
+#Get enrolments from from 15 months before end period to 9 months after start of current period
+cp_vis_cohort_data <- cp_vis_last_nextapp_data %>%
+  filter(
+    enrolment_date>=cp_year_rep_start & enrolment_date<=cp_year_rep_end &
+    visit_dmy>=cp_year_rep_start & visit_dmy<=cp_year_rep_end
+    ) %>%
+  mutate(
+    #Reporting year is + 3months considering the lag
+    report_year = year(as.Date(enrolment_date %m+% months(3)))
+  ) %>%
+  arrange(patient,desc(visit_dmy))
+
+#Get unique patients data (last visit in reporting period) to check for ltfup
+cp_vis_cohort_u_data <- cp_vis_cohort_data[!duplicated(cp_vis_cohort_data[,4]),]
+
+#Splitting visit data per reporting period (year in this case)
+spl <-split(cp_vis_cohort_data,cp_vis_cohort_data$report_year)
+
+cp_vis_cohort_u_data <-data.frame(matrix(ncol = 26,nrow = 0))
+colnames(cp_vis_cohort_u_data) <- colnames(cp_vis_cohort_data)
+
+#Loop through each reporting category and get unique patients
+for(x in spl){
+   cp_vis_cohort_u_data <-cp_vis_cohort_u_data%>%
+   rbind(x[!duplicated(x[,4]),])
+}
   
-# cp_trans_data%>%
-#   filter(facility_to=="CH KABINDA" & transfer_dmy >= cp_start_date )%>%
-#   mutate(
-#     quarter_year = quarter(transfer_dmy, with_year = T),
-#   )%>%
-#   group_by(quarter_year,method_into_art)%>%
-#   arrange(quarter_year)%>%
-#   summarise(total = n())%>%
-#   ggplot()+
-#   geom_bar(
-#     stat = "identity",
-#     color = "#661a00",
-#     position = position_stack(reverse = FALSE),
-#     aes(x = quarter_year,y = total,fill = method_into_art,
-#     )
-#   )
+
+#### NEXT STEPSSSSS ####
+#LOOK INTO HOW FILTERING IS DONE FOR VISITS PER REPORTING PERIOD
+#ALGORITHM IS TO LOOK, FROM ENROLLMENTS IN A PERIOD (YEAR),
+#HOW MANY WERE LOST TO FOLLOW UP IN THAT REPORTING PERIOD (YEAR)
 
 
-summary(cp_pat)
 
-#CP Patients
-#start date end end date to be dynamic: cp_start_date, cp_end_date
-#transfers in and transfers out
-#Add enrollment dates
-  #==transfers in date if method_into_art ==1
-  #==haart_start_date if method_into_art  ==0
-#Change transfer category
-  #transfers in in cp_trans_data, facility_from ==facility_to :
-#Count number of transfers with more than one transfer
+cp_diff <- cp_pat %>%
+  filter(method_into_art =="1" & haart_dmy != transfer_in_dmy)
 
-#enrol_per_year
-#cp_data_type
-#cp_diff
-#cp_trans_data_hiv
-#cp_trans_data_hiv_sum
-#cp_vis_lat_nextapp_data
+### TRANSFERS 
 
-#Graph for enrollments per period(quarter)
+## Get Transfers data for HIV only
+cp_trans_data_hiv %>% cp_trans_data %>%
+  filter(is.na(tb_start_dmy))
 
-#Graph for transfers out after 3M,6M,12M,>12M
+##Get patients(based on folder number) with more than one transfer (in or out)
+cp_data_type <- cp_trans_data_hiv %>%
+  group_by(trans_cat,patient)%>%
+  summarise(
+    tot = n()
+  ) %>%
+  filter(tot>1)
+
+##Since there is very few patients that appear to have been transferred more than once,
+##assumption: Each enrollment (new,transfer in) is treated as a "new patient"
+
 
 #Patients in care data per year
   #Enrollment and how many stay afer 3M,6M,12M,>12M
-
 ```
