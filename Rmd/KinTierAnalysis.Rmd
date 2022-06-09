@@ -245,6 +245,9 @@ transfers<-unique(transfers)
 
 ################# 5. Merge tables                #################
 ##################################################################
+
+patient_full <-left_join(pat,dem,"patient")
+
 vis_data  <- left_join(vis,dem,"patient") %>%
   left_join(pat,"patient")
 
@@ -268,9 +271,19 @@ trans_data<- left_join(transfers,dem,"patient") %>%
 #############################################################################
 
 ############################ CP PATIENT ANALYSIS ############################
+#############################################################################
 
+cp_start_date <-as.Date("2016/01/01")
+cp_end_date   <-as.Date("2021/12/31")
 
-cp_pat <-patient_det%>%
+cp_pat <-patient_full%>%
+  mutate(
+    enrolment_date = case_when(
+      method_into_art =="1" ~ transfer_in_dmy,
+      method_into_art =="0" ~ haart_dmy 
+    )
+  )%>%
+  filter(enrolment_date>=cp_start_date & enrolment_date<=cp_end_date)%>%
   #Get CP patients from CHK (Both Converted CP from CHK and new CP patients)
   filter(
     (startsWith(folder_number,"CP") | endsWith(folder_number,"/CP")) 
@@ -292,17 +305,26 @@ cp_trans_data <- trans_data %>%
 
 #Proportion of Transfers In vs New Patients in CP patients
 
+
+
 #Q/ How do we define new vs transfer in patients when it comes to CP patients?
+
 
 prop_cp_patient_meth_art <-cp_pat %>%
   #filter(method_into_art==0)%>%
-  filter(as.Date(haart_dmy)>=as.Date("2016/01/01"))%>%
+  filter(as.Date(enrolment_date)>=cp_start_date)%>%
   mutate(
-    quarter_year = quarter(haart_dmy, with_year = T),
+    quarter_year = quarter(enrolment_date, with_year = T),
   )%>%
-  group_by(quarter_year,cohort,method_into_art)%>%
+  group_by(quarter_year,method_into_art)%>%
   arrange(quarter_year)%>%
   summarise(total = n())
+
+prop_cp_patient_sum <- prop_cp_patient_meth_art %>%
+  group_by(quarter_year)%>%
+  arrange(quarter_year)%>%
+  summarise(total = sum(total,na.rm = TRUE))
+  
 
 prop_cp_patient_meth_art%>%
   ggplot()+
@@ -312,28 +334,75 @@ prop_cp_patient_meth_art%>%
     position = position_stack(reverse = FALSE),
     aes(x = quarter_year,y = total,fill = method_into_art,
     )
+  )+
+  theme(
+    legend.position = "bottom",
+    axis.text.x = element_text(angle = 65,hjust = 1.0),
+    legend.title = element_blank(),
+  )+
+  geom_smooth(
+    aes(x=quarter_year,y = total,colour="Tendances enrollement CP"),
+    data = prop_cp_patient_sum,
+    method = "loess",
+    formula = "y~x"
+  )+
+  scale_fill_manual(#Add custom colors to bar graph values
+    values=c("0"="#ffa366","1"="#80d4ff"),
+    labels = c("New","Transfer In")
+  )+
+  labs(
+    title = stringr::str_glue("Enrollement des patients CP(New + Transfers In), {year(cp_start_date)} - {year(cp_end_date)}") ,
+    x     = "Période",
+    y     = "Total",
   )
+
+
+
+
+
   
-cp_trans_data%>%
-  filter(facility_to=="CH KABINDA" & transfer_dmy >= as.Date("2016/01/01") )%>%
-  mutate(
-    quarter_year = quarter(transfer_dmy, with_year = T),
-  )%>%
-  group_by(quarter_year,method_into_art)%>%
-  arrange(quarter_year)%>%
-  summarise(total = n())%>%
-  ggplot()+
-  geom_bar(
-    stat = "identity",
-    color = "#661a00",
-    position = position_stack(reverse = FALSE),
-    aes(x = quarter_year,y = total,fill = method_into_art,
-    )
-  )
+# cp_trans_data%>%
+#   filter(facility_to=="CH KABINDA" & transfer_dmy >= cp_start_date )%>%
+#   mutate(
+#     quarter_year = quarter(transfer_dmy, with_year = T),
+#   )%>%
+#   group_by(quarter_year,method_into_art)%>%
+#   arrange(quarter_year)%>%
+#   summarise(total = n())%>%
+#   ggplot()+
+#   geom_bar(
+#     stat = "identity",
+#     color = "#661a00",
+#     position = position_stack(reverse = FALSE),
+#     aes(x = quarter_year,y = total,fill = method_into_art,
+#     )
+#   )
 
 
 summary(cp_pat)
 
+#CP Patients
+#start date end end date to be dynamic: cp_start_date, cp_end_date
+#transfers in and transfers out
+#Add enrollment dates
+  #==transfers in date if method_into_art ==1
+  #==haart_start_date if method_into_art  ==0
+#Change transfer category
+  #transfers in in cp_trans_data, facility_from ==facility_to :
+#Count number of transfers with more than one transfer
 
+#enrol_per_year
+#cp_data_type
+#cp_diff
+#cp_trans_data_hiv
+#cp_trans_data_hiv_sum
+#cp_vis_lat_nextapp_data
+
+#Graph for enrollments per period(quarter)
+
+#Graph for transfers out after 3M,6M,12M,>12M
+
+#Patients in care data per year
+  #Enrollment and how many stay afer 3M,6M,12M,>12M
 
 ```
