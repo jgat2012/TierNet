@@ -273,17 +273,21 @@ trans_data<- left_join(transfers,dem,"patient") %>%
 ############################ CP PATIENT ANALYSIS ############################
 #############################################################################
 
-cp_start_date <-as.Date("2016/01/01")
-cp_end_date   <-as.Date("2021/12/31")
+cp_start_date    <- as.Date("2016/01/01")
+cp_end_date      <- as.Date("2021/12/31")
+trans_in_var     <- "transfer in"
+trans_out_var    <- "transfer out"
+trans_out_periods<- c("0-6M","6-12M",">12M")
 
 cp_pat <-patient_full%>%
   mutate(
     enrolment_date = case_when(
       method_into_art =="1" ~ transfer_in_dmy,
       method_into_art =="0" ~ haart_dmy 
-    )
+    ),
+    enrol_year  = year(enrolment_date)
   )%>%
-  filter(enrolment_date>=cp_start_date & enrolment_date<=cp_end_date)%>%
+  #filter(enrolment_date>=cp_start_date & enrolment_date<=cp_end_date)%>%
   #Get CP patients from CHK (Both Converted CP from CHK and new CP patients)
   filter(
     (startsWith(folder_number,"CP") | endsWith(folder_number,"/CP")) 
@@ -324,9 +328,10 @@ cp_trans_data <- trans_data %>%
   ) %>%
   mutate(
     trans_cat = case_when(
-      mapply(identical,facility_from,facility_to) & method_into_art =="1" ~ "transfer in",
-      mapply(identical,facility,facility_from)  ~ "transfer out",
-      mapply(identical,facility,facility_to) ~ "transfer in",
+      mapply(identical,facility_from,facility_to) & transfer_dmy > transfer_in_dmy ~ trans_out_var,
+      mapply(identical,facility_from,facility_to) & method_into_art =="1" ~ trans_in_var,
+      mapply(identical,facility,facility_from)  ~ trans_out_var,
+      mapply(identical,facility,facility_to) ~ trans_in_var,
       TRUE ~ ""
     )
   ) %>%
@@ -341,7 +346,9 @@ cp_trans_data <- trans_data %>%
       TRUE ~ ""
     )
   )
-
+  
+  cp_trans_data$trans_cat[cp_trans_data$trans_cat==""] <-NA
+  cp_trans_data$out_aft_cat[cp_trans_data$out_aft_cat==""] <-NA
 
 
 #### Enrollment data ####
@@ -399,12 +406,9 @@ prop_cp_patient_meth_art%>%
 
 
 enrol_per_year <- cp_pat %>%
-  mutate(
-    enrol_year = year(enrolment_date)
-  ) %>%
   group_by(enrol_year)%>%
   summarise(
-    total = n()
+    total_enrol = n()
   )
 
 cp_sum_enr <- cp_pat%>%
@@ -475,14 +479,66 @@ cp_diff <- cp_pat %>%
   filter(method_into_art =="1" & haart_dmy != transfer_in_dmy)
 
 ### TRANSFERS 
-cp_trans_data<- cp_trans_data %>%
-  mutate(
-    
-  )
+
 
 ## Get Transfers data for HIV only
-cp_trans_data_hiv %>% cp_trans_data %>%
+cp_trans_data_hiv <- cp_trans_data %>%
   filter(is.na(tb_start_dmy))
+
+## TRANSFER OUT ANALYSIS
+## Look at transfers out from enrollment in each reporting period(year)
+## Answer to question : After how long do patients get transferred out?
+
+
+
+cp_trans_out_data <- cp_trans_data_hiv %>%
+  filter(#Filter transfers out with transfer out period
+    trans_cat == trans_out_var &!is.na(out_aft_cat)
+    ) %>%
+  
+  select(enrol_year,folder_number,out_aft_cat) %>%
+  pivot_wider(names_from = out_aft_cat,values_from = folder_number,values_fn = length) %>%
+  relocate(enrol_year,trans_out_periods) #Change order of columns
+
+
+cp_sum_trans_out_data <- left_join(enrol_per_year,cp_trans_out_data,"enrol_year")
+
+#Replace NA with 0
+#cp_sum_trans_out_data[is.na(cp_sum_trans_out_data)] <-0
+
+#Plotting transfers out for the reporting period
+cp_sum_trans_out_data %>%
+  filter(enrol_year >= year(cp_start_date) & enrol_year <=year(cp_end_date)) %>%
+  pivot_longer(cols = trans_out_periods, names_to = "category",values_to = "total") %>%
+  #mutate(category = factor(category),levels(trans_out_periods)) %>%
+  ggplot()+
+  # geom_point(
+  #   stat = "identity",
+  #   mapping = aes(x = enrol_year,y = total_enrol),
+  #   na.rm = TRUE,
+  # ) +
+  geom_col(
+    stat = "identity",
+    mapping = aes(x = enrol_year,y =total, fill = fct_rev(factor(category,levels =trans_out_periods))),
+    #width = .30,
+    na.rm = TRUE,
+  )+theme(
+    legend.position = "bottom",
+    axis.text.x = element_text(angle = 65,hjust = 1.0),
+    legend.title = element_blank(),
+  )+
+  scale_fill_manual(#Add custom colors to bar graph values
+    values=c("0-6M"="#80d4ff","6-12M"="#ffa366",">12M"="#ff8080"),
+    labels = c("0-6M","6-12M",">12M")
+  )+
+  labs(
+    title = stringr::str_glue("Transfer out des patients CP par période de transfert après enrollement, {year(cp_start_date)} - {year(cp_end_date)}") ,
+    x     = "Période",
+    y     = "Total",
+  )
+
+
+
 
 ##Get patients(based on folder number) with more than one transfer (in or out)
 cp_data_type <- cp_trans_data_hiv %>%

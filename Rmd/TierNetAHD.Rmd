@@ -476,6 +476,7 @@ vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans_data<- vis_cd4_crag_tbm_lvl_l3cd4_lst
       TRUE ~ ""
     )
   )
+
 ```
 
 ##ELIGIBILITY CRITERIA
