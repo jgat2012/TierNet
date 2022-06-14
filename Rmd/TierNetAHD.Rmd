@@ -36,19 +36,22 @@ clean_names <- janitor::clean_names
 # load functions used from R scripts
 source_path <- here("R", "RScripts.R")
 source(source_path,local = knitr::knit_global())
+#Set vector size limit
+memory.limit(size = 4000)
 
 data_folder <- "data"
 image_folder <- "images"
 output_folder <- "output"
 
-###############################################################################
-#################   I. Importing & Exploring Data         #####################
-###################   Version of Tier.net : 1.13.4      #######################
-###############################################################################
 
 ```
 
 ```{r, include=FALSE}
+
+###############################################################################
+#################   I. Importing & Exploring Data         #####################
+###################   Version of Tier.net : 1.13.4      #######################
+###############################################################################
 
 con<-RODBC::odbcDriverConnect("Driver={Microsoft Access Driver (*.mdb)};DBQ=C:/Users/Gauthier Abdala/Documents/RWD/TierNet/data/TierDESKinshasa042022.mdb")
 
@@ -138,8 +141,8 @@ transfers <-trim_data_columns(transfers)
 transfers[is.null(transfers)  | transfers == "NULL" | transfers == ""] <- NA
 
 
-################ 4. Convert columns classes      #############
-##############################################################
+########### 4. Convert columns classes/add columns  #############
+#################################################################
 #is.date <- function(x) inherits(x, 'Date') #Used to check of column is date
 
 
@@ -152,8 +155,9 @@ vis <- vis %>%
   ) %>%
   mutate(
     visit_dmy = as.Date(as.numeric(visit_dmy),origin ="1970-01-01"),
-    next_visit_dmy = as.Date(as.numeric(next_visit_dmy),origin ="1970-01-01")
-    )
+    next_visit_dmy = as.Date(as.numeric(next_visit_dmy),origin ="1970-01-01"),
+    vis_year = year(visit_dmy)
+  )
 
 
 pat <- pat %>%
@@ -173,7 +177,16 @@ pat <- pat %>%
     haart_dmy = as.Date(as.numeric(haart_dmy),origin ="1970-01-01"),
     transfer_in_dmy = as.Date(as.numeric(transfer_in_dmy),origin ="1970-01-01"),
     outcome_dmy = as.Date(as.numeric(outcome_dmy),origin ="1970-01-01"),
-    )
+    ) %>%
+  mutate(
+     #Add enrollment date
+    enrol_date = case_when(
+      method_into_art =="1" ~ transfer_in_dmy,
+      method_into_art =="0" ~ haart_dmy 
+    ),
+    #Add enrollment year
+    enrol_year  = year(enrol_date)
+  )
 
 lab <- lab %>%
   mutate(across(.cols = everything(), .fns = as.character)) %>% #Convert all columns to character class
@@ -246,8 +259,12 @@ transfers<-unique(transfers)
 
 ################# 5. Merge tables                #################
 ##################################################################
+
+patient_full <-left_join(pat,dem,"patient")
+
 vis_data <- left_join(vis,dem,"patient") %>%
   left_join(pat,"patient")
+
 
 
 ################# 6. Add variables/values labels    ##############
@@ -258,6 +275,9 @@ vis_data <- left_join(vis,dem,"patient") %>%
 # labelled::val_labels(vis_data$method_in_art_named) <-c("0" = "New", "1" = "Transfer In", "88" = NA )
 
 
+## Remove unused/intermediate objects from memory
+
+rm(list = c("dem_raw","lab_raw","pat_raw","tb_raw","transfers_raw","vis_raw","vis_tb_raw"))
 
 ```
 
@@ -293,8 +313,6 @@ lab_data_cd4 <-lab %>%
   )
 
 
-
-
 #vis_cd4 <- left_join(vis_data,lab_data_cd4,c("patient"="patient","visit_dmy"="lab_dmy"))
 
 ###!!! Important to clarify CD4 time window (here +-7 days) based on result turnaround time and validity period before requesting
@@ -302,7 +320,8 @@ lab_data_cd4 <-lab %>%
 
 vis_cd4 <- sqldf(
   "select vis.visit_dmy,vis.patient,vis.next_visit_dmy,vis.folder_number,vis.cohort,vis.facility,vis.birth_dmy,
-    vis.gender,vis.frsvis_dmy,vis.haart,vis.haart_dmy,vis.method_into_art,vis.tb_status,vis.transfer_in_dmy,vis.outcome,vis.outcome_dmy,lab.lab_dmy,lab.lab_v,lab.cd4_category from vis_data vis
+    vis.gender,vis.frsvis_dmy,vis.haart,vis.haart_dmy,vis.method_into_art,vis.tb_status,vis.transfer_in_dmy,vis.outcome,vis.outcome_dmy,vis.enrol_date,vis.enrol_year,lab.lab_dmy,lab.lab_v,lab.cd4_category 
+    from vis_data vis
     left join lab_data_cd4 lab 
       on vis.patient = lab.patient and
         lab.lab_dmy  between (vis.visit_dmy-7)  and (vis.visit_dmy + 7) 
@@ -312,7 +331,6 @@ vis_cd4 <- sqldf(
     cd4_date = lab_dmy,
     cd4_value= lab_v
   )
-  
  
 #Filter duplicate lab results based on CD4 lab date
 vis_cd4<-vis_cd4 %>%
@@ -330,6 +348,7 @@ vis_cd4_data<-vis_cd4[!duplicated(vis_cd4[,1:16]),]
 
 ###################### CRAG LAB DATA ##############################
 ##################################################################
+
 
 lab_data_crag <-lab %>%
   filter((lab_id =="CRAG") & !is.na(lab_t)) 
@@ -410,6 +429,15 @@ vis_cd4_crag_tbm_lvl<-vis_cd4_crag_tbm_lvl %>%
 vis_cd4_crag_tbm_lvl_data<-vis_cd4_crag_tbm_lvl[!duplicated(vis_cd4_crag_tbm_lvl[,1:23]),]
 
 
+
+  
+## Remove unused/intermediate objects from memory
+
+rm(list = c("vis_cd4","vis_cd4_data",
+            "lab_data_crag","vis_cd4_crag","vis_cd4_crag_data",
+            "lab_data_tblam","vis_cd4_crag_tbm","vis_cd4_crag_tbm_data",
+            "lab_data_vl","vis_cd4_crag_tbm_lvl"))
+
 ###################### LAST CD4 DATA #################################
 ######################################################################
 
@@ -450,6 +478,7 @@ vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_data <- vis_cd4_crag_tbm_lvl_l3cd4_data %>%
   ) %>%
   select(last_next_app,visit_dmy,miss_app_days,everything())
 
+#object.size(vis_cd4_crag_tbm_lvl_l3cd4_data)
 
 ########################## TRANSFER DATA #############################
 ######################################################################
@@ -477,6 +506,12 @@ vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans_data<- vis_cd4_crag_tbm_lvl_l3cd4_lst
     )
   )
 
+## Remove unused/intermediate objects from memory
+
+# rm(list = c("vis_cd4_crag_tbm_lvl_l3cd4","vis_cd4_crag_tbm_lvl_l3cd4_data",
+#             "vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_data","vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans"))
+
+
 ```
 
 ##ELIGIBILITY CRITERIA
@@ -496,11 +531,17 @@ High VL: Patients who visit the facility after having a high VL
 ######################################################################
 
 
-
 start_period <-as.Date("2021/01/01")
-end_period <-as.Date("2021/12/31")
-pat_col_ind <- 4 #Patient column index in the data frame
-days_ltfup <-90 #This can be context specific
+end_period   <-as.Date("2021/12/31")
+pat_col_ind  <- 4 #Patient column index in the data frame
+days_ltfup   <-90 #Days for ltfu. This can be context specific
+
+#Summary data for AHD cascade
+summ_data_ahd <-data.frame(matrix(nrow = 0,ncol=14))
+col_names <- c("category","eligible","cd4_done","%cd4_done","cd4_lt200","%cd4_lt200",
+               "lam_done","%lam_done","crag_done_","%crag_done","lam_pos","%lam_pos",
+               "crag_pos","%crag_pos")
+colnames(summ_data_ahd) <-col_names
 
 vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans_data <- vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans_data %>%
   mutate(
@@ -508,14 +549,15 @@ vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans_data <- vis_cd4_crag_tbm_lvl_l3cd4_ls
     vis_month_year   = format(as.Date(visit_dmy), "%Y-%m"),
   )
 
-#Add category for the eligibility criteria
-vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans_data<-vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans_data%>%
-  mutate(
-   elig_cat = case_when(
-     visit_dmy == haart_dmy & method_into_art == 0 ~ "Initiations",
-     
-   ) 
-  )
+
+# vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans_data<-vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans_data%>%
+#   mutate(
+#     #Add category for the eligibility criteria
+#     elig_cat = case_when(
+#        visit_dmy == haart_dmy & method_into_art == 0 ~ "Initiations",
+#        
+#     )
+#   )
 
 
 ############################  PATIENTS WITH NO CD4   ###########################
@@ -523,39 +565,82 @@ vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans_data<-vis_cd4_crag_tbm_lvl_l3cd4_lstn
 #Q/ What time window between enrolment in cohort vs check for CD4?
 #Joining patient table and lab table(CD4), then filter only patients with no CD4
 
-#A/ Eligibility : Patients on ART for >=12M at start of reporting period and are still in care
+# Assumption/ Eligibility : Patients enrolled  for >=12M at start of reporting period 
+# and never had a CD4 by start of reporting period
+# Def : Enrollment date == transfer in if method in art == 1/ art start date if 
+# method in art == 0
 
-no_cd4_pat <- sqldf(
-  #Patient registered in Tier but have never had a CD4
-  "
-    select pat.*
-    from pat
-    where pat.patient not in (
-      select patient from lab where lab_id ='CD4A'
-    )
-  "
-) %>%
+#Get list of visits within reporting period for patients enrolled for >=12M 
+#at the beginning of reporting period
+
+#Get patients who have NEVER done a CD4 prior start of reporting
+lab_data_cd4_temp <- lab_data_cd4 %>%
+  filter(lab_dmy <start_period)
+
+no_cd4_patient  <- patient_full %>%
+  left_join(lab_data_cd4_temp,by = "patient") %>%
+  #Get patients who do not have a CD4
+  filter(is.na(lab_v))
+
+no_cd4_pat_code <- unique(no_cd4_patient$patient)
+
+#Remove object from memory
+rm("lab_data_cd4_temp")
+
+vis_gt_12m <- vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans_data %>%
+ 
   filter(
-    #Filter patients still active in care
-    outcome=="20" &
-      #Filter patients who started ART before end of reporting period and are on ART for more than 1 year
-    (start_period - haart_dmy) >=365 #Difference report start >=12M
-  )
-#Join with visit table to get patient visits
-no_cd4_pat<-no_cd4_pat %>%
-  left_join(
-    vis,c("patient" = "patient")
+    #1. Filter only patients who have never done CD4 prior start of reporting period
+      patient %in% no_cd4_pat_code
+    #2. Filter visits for current reporting period
+    &(visit_dmy>=start_period & visit_dmy<=end_period)
+    
+    #3. Filter patients enrolled for >=12M 
+    & ((interval(enrol_date,start_period) %/% days(1) / (365/12)) >12 )
   ) %>%
-  arrange(desc(visit_dmy))
+  
+  # Arrange to place first visit for patient with CD4 on top
+  # Useful when filtering unique patients
+  arrange(desc(patient),desc(cd4_date))
 
-#Keep only latest visit for each patient
-no_cd4_pat_data<-no_cd4_pat[!duplicated(no_cd4_pat[,1:15]),]
-no_cd4_pat_data %>%
-  rename(#Renaming columns
-    "lat_vis_dmy"      = visit_dmy,
-    "lat_next_app_dmy" = next_visit_dmy
+#Get unique patients
+
+no_cd4_data_dup <- vis_gt_12m[duplicated(vis_gt_12m[,6:20]),]
+
+#Patients with no CD4 ever eligibible for CD4 in current reporting period
+no_cd4_data <- vis_gt_12m[!duplicated(vis_gt_12m[,6:20]),]
+
+#Get unique patient codes with no CD4 to be used to avoid duplicate patients
+no_cd4_pat_code <- unique(no_cd4_data$patient)
+
+#Bind rows to summary data
+summ_data_ahd <- summ_data_ahd %>%
+  rbind(
+    no_cd4_data %>%
+       mutate(
+        vis_year = year(visit_dmy)
+      )%>%
+      mutate(
+        category    = "patient with no cd4",
+      )%>%
+      group_by(category) %>%
+      summarise(
+        eligible    = n(),
+        cd4_done    = sum(!is.na(cd4_value),na.rm = TRUE),
+        `%cd4_done` = round((cd4_done/eligible),4)*100, 
+        cd4_lt200   = sum(cd4_value<200,na.rm = TRUE),
+        `%cd4_lt200`= round((cd4_lt200/cd4_done),4)*100,
+        lam_done    = sum(cd4_value<200 & !is.na(tbm_value),na.rm = TRUE),
+        `%lam_done` = round((lam_done/cd4_lt200),4)*100,
+        crag_done   = sum(cd4_value<200 & !is.na(crag_value),na.rm = TRUE),
+        `%crag_done`= round((crag_done/cd4_lt200),4)*100,
+        lam_pos     = sum(cd4_value<200 & !is.na(tbm_value) & (tbm_value=="+"),na.rm = TRUE),
+        `%lam_pos`  = round((lam_pos/lam_done),4)*100,
+        crag_pos    = sum(cd4_value<200 & !is.na(crag_value) & (crag_value=="+"),na.rm = TRUE),
+        `%crag_pos` = round((crag_pos/crag_done),4)*100
+        
+      )
   )
-
 
 
 ###########################  NEW INITIATIONS   #################################
@@ -564,81 +649,140 @@ no_cd4_pat_data %>%
 
 
 #Filter visits that happen on ART Start Date (new art initiations) and new patients (not transfers in)
-new_art_initiations <-vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans_data %>%
+
+new_init <-vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans_data %>%
   filter( 
-    visit_dmy == haart_dmy & method_into_art == 0
+    (visit_dmy>=start_period & visit_dmy<=end_period)
+    #New initiations filtering
+    & (visit_dmy == haart_dmy & method_into_art == 0)
+    # Excludes patients already list of no CD4 patients to avoid double counting
+    & !(patient %in% no_cd4_pat_code)
+  )
+new_init_data <- new_init[!duplicated(new_init[,6:20]),]
+
+#Get unique patient codes with no CD4 to be used to avoid duplicate patients
+new_init_pat_code <- unique(new_init_data$patient)
+
+#Bind rows to summary data
+summ_data_ahd <- summ_data_ahd %>%
+  rbind(
+    new_init_data %>%
+       mutate(
+        vis_year = year(visit_dmy)
+      )%>%
+      mutate(
+        category    = "new art initiations",
+      )%>%
+      group_by(category) %>%
+      summarise(
+        eligible    = n(),
+        cd4_done    = sum(!is.na(cd4_value),na.rm = TRUE),
+        `%cd4_done` = round((cd4_done/eligible),4)*100, 
+        cd4_lt200   = sum(cd4_value<200,na.rm = TRUE),
+        `%cd4_lt200`= round((cd4_lt200/cd4_done),4)*100,
+        lam_done    = sum(cd4_value<200 & !is.na(tbm_value),na.rm = TRUE),
+        `%lam_done` = round((lam_done/cd4_lt200),4)*100,
+        crag_done   = sum(cd4_value<200 & !is.na(crag_value),na.rm = TRUE),
+        `%crag_done`= round((crag_done/cd4_lt200),4)*100,
+        lam_pos     = sum(cd4_value<200 & !is.na(tbm_value) & (tbm_value=="+"),na.rm = TRUE),
+        `%lam_pos`  = round((lam_pos/lam_done),4)*100,
+        crag_pos    = sum(cd4_value<200 & !is.na(crag_value) & (crag_value=="+"),na.rm = TRUE),
+        `%crag_pos` = round((crag_pos/crag_done),4)*100
+        
+      )
   )
 
-
-art_casc <-vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans_data %>%
-  filter(visit_dmy>=start_period & visit_dmy<=end_period)%>%
-   mutate(
-    quarter_year = quarter(visit_dmy, with_year = T),
-    month_year   = format(as.Date(visit_dmy), "%Y-%m"),
-  )%>%
-  
-  group_by(quarter_year,facility)%>%
-  summarise(
-    tot_vis       = n(),
-    tot_cd4       = sum(!is.na(cd4_value),na.rm = TRUE),
-    tot_in        = sum(visit_dmy == haart_dmy & method_into_art == 0,na.rm = TRUE),
-    cd4_in        = sum(visit_dmy == haart_dmy & method_into_art == 0 & !is.na(cd4_value),na.rm = TRUE),
-    `% cd4_in`    = round((cd4_in/tot_in),4)*100,
-    tot_cd4_lt200 = sum(cd4_value<200,na.rm = TRUE), #Tot CD4 < 200
-    cd4_lt200_in  = sum(visit_dmy == haart_dmy & method_into_art == 0 & !is.na(cd4_value) & cd4_value<200,na.rm = TRUE), #Tot CD4 < 200
-    cd4_lt200_oth = sum(!(visit_dmy == haart_dmy & method_into_art == 0) & !is.na(cd4_value) & cd4_value<200,na.rm = TRUE),
-    tot_lam       = sum(cd4_value<200 & !is.na(tbm_value),na.rm = TRUE),
-    `%tot_lam`    = round((tot_lam/tot_cd4_lt200),4)*100,
-    lam_in        = sum(visit_dmy == haart_dmy & method_into_art == 0 & !is.na(cd4_value) & cd4_value<200 & !is.na(tbm_value),na.rm = TRUE),
-    `%lam_in`     = round((lam_in/cd4_lt200_in),4)*100,
-    tot_crag      = sum(cd4_value<200 & !is.na(crag_value),na.rm = TRUE),
-    `%tot_crag`   = round((tot_crag/tot_cd4_lt200),4)*100,
-    crag_in       = sum(visit_dmy == haart_dmy & method_into_art == 0 & !is.na(cd4_value) & cd4_value<200 & !is.na(crag_value),na.rm = TRUE),
-    `%crag_in`    = round((crag_in/cd4_lt200_in),4)*100,
-    lam_pos       = sum(cd4_value<200 & !is.na(tbm_value) & (tbm_value=="+"),na.rm = TRUE),
-    `%lam_pos`    = round((lam_pos/tot_lam),4)*100,
-    crag_pos      = sum(cd4_value<200 & !is.na(tbm_value) & (crag_value=="+"),na.rm = TRUE),
-    `%crag_pos`   = round((crag_pos/tot_crag),4)*100,
-  )# %>%
-  #adorn_totals()
+# art_casc <-vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans_data %>%
+#   filter(visit_dmy>=start_period & visit_dmy<=end_period)%>%
+#    mutate(
+#     quarter_year = quarter(visit_dmy, with_year = T),
+#     month_year   = format(as.Date(visit_dmy), "%Y-%m"),
+#   )%>%
+#   
+#   group_by(quarter_year,facility)%>%
+#   summarise(
+#     tot_vis       = n(),
+#     tot_cd4       = sum(!is.na(cd4_value),na.rm = TRUE),
+#     tot_in        = sum(visit_dmy == haart_dmy & method_into_art == 0,na.rm = TRUE),
+#     cd4_in        = sum(visit_dmy == haart_dmy & method_into_art == 0 & !is.na(cd4_value),na.rm = TRUE),
+#     `% cd4_in`    = round((cd4_in/tot_in),4)*100,
+#     tot_cd4_lt200 = sum(cd4_value<200,na.rm = TRUE), #Tot CD4 < 200
+#     cd4_lt200_in  = sum(visit_dmy == haart_dmy & method_into_art == 0 & !is.na(cd4_value) & cd4_value<200,na.rm = TRUE), #Tot CD4 < 200
+#     cd4_lt200_oth = sum(!(visit_dmy == haart_dmy & method_into_art == 0) & !is.na(cd4_value) & cd4_value<200,na.rm = TRUE),
+#     tot_lam       = sum(cd4_value<200 & !is.na(tbm_value),na.rm = TRUE),
+#     `%tot_lam`    = round((tot_lam/tot_cd4_lt200),4)*100,
+#     lam_in        = sum(visit_dmy == haart_dmy & method_into_art == 0 & !is.na(cd4_value) & cd4_value<200 & !is.na(tbm_value),na.rm = TRUE),
+#     `%lam_in`     = round((lam_in/cd4_lt200_in),4)*100,
+#     tot_crag      = sum(cd4_value<200 & !is.na(crag_value),na.rm = TRUE),
+#     `%tot_crag`   = round((tot_crag/tot_cd4_lt200),4)*100,
+#     crag_in       = sum(visit_dmy == haart_dmy & method_into_art == 0 & !is.na(cd4_value) & cd4_value<200 & !is.na(crag_value),na.rm = TRUE),
+#     `%crag_in`    = round((crag_in/cd4_lt200_in),4)*100,
+#     lam_pos       = sum(cd4_value<200 & !is.na(tbm_value) & (tbm_value=="+"),na.rm = TRUE),
+#     `%lam_pos`    = round((lam_pos/tot_lam),4)*100,
+#     crag_pos      = sum(cd4_value<200 & !is.na(crag_value) & (crag_value=="+"),na.rm = TRUE),
+#     `%crag_pos`   = round((crag_pos/tot_crag),4)*100,
+#   )# %>%
+#   #adorn_totals()
 
 
 ###################################  RETURNEES   ###############################
 ################################################################################
+#Outcome : 10, Death(HIV Related), 11: Death (HIV relationship unknown), 
+#20: Alive and in care, 30,31: Transfers out
+#40,41: LTFUP, 95: Not ascertained
 #Def: These are people who have been LTFUP and are coming back to care
 
 
 returnees<- vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans_data %>%
   filter(
     (visit_dmy>=start_period & visit_dmy<=end_period)
-    & miss_app_days >days_ltfup)
+    # Filter patients who returned > days for ltfup
+    & miss_app_days >days_ltfup 
+    # Exclude patients already list of no CD4 patients to avoid double counting
+    & !(patient %in% no_cd4_pat_code)
+    )
   
 #Filter to get unique patients in reporting period
 #Get first occurrence of patient in reporting period
+
+#Q/Consider most recent visit or first occurence? IMO, most recent as it reflects more recent 
+# status of patient
 returnees <-returnees%>%
-  arrange(patient,visit_dmy)
+  arrange(patient,desc(visit_dmy))
 
-returnees_dup <-returnees[duplicated(returnees[,4]),]
-returnees_data<-returnees[!duplicated(returnees[,4]),]
+returnees_dup <-returnees[duplicated(returnees[,pat_col_ind]),]
+returnees_data<-returnees[!duplicated(returnees[,pat_col_ind]),]
 
-returnees_casc<-returnees_data%>%
-  #Exclude initiations that might be part of the data (cross checking for data quality)
-  filter( 
-    !(visit_dmy == haart_dmy & method_into_art == 0)
-  )%>%
-  #Exclude patients who do not currently have a CD4 but have valid CD4 (<=3M)
-  filter(
-    !(is.na(cd4_value) & !is.na(last3cd4_value))
-  )%>%
-  mutate(
-    quarter_year = quarter(visit_dmy, with_year = T),
-    month_year   = format(as.Date(visit_dmy), "%Y-%m"),
-  )%>%
-  group_by(quarter_year)%>%
-  summarise(
-    tot_hvl        = n(),
-    cd4_hvl        = sum(!is.na(cd4_value)),
-    `% cd4_hvl`    = round((cd4_hvl/tot_hvl),4)*100,
+#Get unique patient codes with no CD4 to be used to avoid duplicate patients
+returnees_pat_code <- unique(returnees_data$patient)
+
+#Bind rows to summary data
+summ_data_ahd <- summ_data_ahd %>%
+  rbind(
+    returnees_data %>%
+       mutate(
+        vis_year = year(visit_dmy)
+      )%>%
+      mutate(
+        category    = "returnees",
+      )%>%
+      group_by(category) %>%
+      summarise(
+        eligible    = n(),
+        cd4_done    = sum(!is.na(cd4_value),na.rm = TRUE),
+        `%cd4_done` = round((cd4_done/eligible),4)*100, 
+         cd4_lt200  = sum(cd4_value<200,na.rm = TRUE),
+        `%cd4_lt200`= round((cd4_lt200/cd4_done),4)*100,
+        lam_done    = sum(cd4_value<200 & !is.na(tbm_value),na.rm = TRUE),
+        `%lam_done` = round((lam_done/cd4_lt200),4)*100,
+        crag_done   = sum(cd4_value<200 & !is.na(crag_value),na.rm = TRUE),
+        `%crag_done`= round((crag_done/cd4_lt200),4)*100,
+        lam_pos     = sum(cd4_value<200 & !is.na(tbm_value) & (tbm_value=="+"),na.rm = TRUE),
+        `%lam_pos`  = round((lam_pos/lam_done),4)*100,
+        crag_pos    = sum(cd4_value<200 & !is.na(crag_value) & (crag_value=="+"),na.rm = TRUE),
+        `%crag_pos` = round((crag_pos/crag_done),4)*100
+        
+      )
   )
 
 
@@ -649,104 +793,152 @@ returnees_casc<-returnees_data%>%
 
 #Q/ Consider people with valid CD4 as still part of the cascade for tblam and crag
 
-
+#Q/Consider most recent visit or first occurence? IMO, most recent as it reflects more recent 
+# status of patient
 high_vl <-vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans_data %>%
-  filter(lastvl_value >=1000) %>%
-  arrange(patient,visit_dmy)
+  filter(
+    (
+      visit_dmy>=start_period & visit_dmy<=end_period) 
+      # Filter high VL
+      & lastvl_value >1000
+      # Exclude patients already list of no CD4 patients
+      & !(patient %in% no_cd4_pat_code)
+    ) %>%
+  
+  arrange(patient,desc(visit_dmy))
 
 #Unique patients
 high_vl_dup<-high_vl[duplicated(high_vl[,pat_col_ind]),]
 high_vl_data<-high_vl[!duplicated(high_vl[,pat_col_ind]),]
-#Get first occurrence of patient in reporting period
-#Q/What happens if you had two high VL in same reporting period?
 
+#Get unique patient codes with no CD4 to be used to avoid duplicate patients
+high_vl_pat_code <- unique(high_vl_data$patient)
 
-high_vl_casc<-high_vl_data%>%
-  #Exclude initiations that might be part of the data (cross checking for data quality)
-  filter( 
-    !(visit_dmy == haart_dmy & method_into_art == 0)
-  )%>%
-  #Exclude patients who do not currently have a CD4 but have valid CD4 (<=3M)
-  filter(
-    !(is.na(cd4_value) & !is.na(last3cd4_value))
-  )%>%
-  mutate(
-    quarter_year = quarter(visit_dmy, with_year = T),
-    month_year   = format(as.Date(visit_dmy), "%Y-%m"),
-  )%>%
-  group_by(quarter_year)%>%
-  summarise(
-    tot_hvl        = n(),
-    cd4_hvl        = sum(!is.na(cd4_value)),
-    `% cd4_hvl`    = round((cd4_hvl/tot_hvl),4)*100,
+#Bind rows to summary data
+summ_data_ahd <- summ_data_ahd %>%
+  rbind(
+    high_vl_data %>%
+       mutate(
+        vis_year = year(visit_dmy)
+      )%>%
+      mutate(
+        category    = "high vl",
+      )%>%
+      group_by(category) %>%
+      summarise(
+        eligible    = n(),
+        cd4_done    = sum(!is.na(cd4_value),na.rm = TRUE),
+        `%cd4_done` = round((cd4_done/eligible),4)*100, 
+         cd4_lt200  = sum(cd4_value<200,na.rm = TRUE),
+        `%cd4_lt200`= round((cd4_lt200/cd4_done),4)*100,
+        lam_done    = sum(cd4_value<200 & !is.na(tbm_value),na.rm = TRUE),
+        `%lam_done` = round((lam_done/cd4_lt200),4)*100,
+        crag_done   = sum(cd4_value<200 & !is.na(crag_value),na.rm = TRUE),
+        `%crag_done`= round((crag_done/cd4_lt200),4)*100,
+        lam_pos     = sum(cd4_value<200 & !is.na(tbm_value) & (tbm_value=="+"),na.rm = TRUE),
+        `%lam_pos`  = round((lam_pos/lam_done),4)*100,
+        crag_pos    = sum(cd4_value<200 & !is.na(crag_value) & (crag_value=="+"),na.rm = TRUE),
+        `%crag_pos` = round((crag_pos/crag_done),4)*100
+        
+      )
   )
 
 
-################### ELIGIBILITY FOR CD4 AND CD4 DONE ###########################
+#############################  OTHER CD4 DONE   ################################
 ################################################################################
-
-#Data for a year,show of trends
-art_casc_sum1 <-art_casc%>%
-  mutate(
-    not_cd4_in = tot_in - cd4_in
-  )%>%
-  pivot_longer(cols=c(not_cd4_in,cd4_in))
-
-art_casc_sum1 %>%
-  mutate(
-    name = factor(name,levels=c("not_cd4_in","cd4_in"))
-  )%>%
-  ggplot()+
-  geom_bar(
-    aes(x=month_year,y=value,fill=name),
-    stat="identity",
-    color = "#661a00"
-  )+theme(
-    #aspect.ratio = 1.3,
-    legend.position = "bottom",
-    axis.text.x = element_text(angle = 65,hjust = 1.0),
-    legend.title = element_blank(),
-  )+labs(
-    title = "CD4 Done among new ART initiations, 2021",
-    x = "Periode",
-    y="Total"
-  )+
-  scale_fill_discrete(
-    labels=c("","CD4 Done")
-    )
-
-#At a specific point in time
-art_casc_sum2 <-art_casc%>%
- 
-  rename(
-    "Eligible" = tot_in,
-    "CD4 done" = cd4_in,
-    "CD4 < 200"= cd4_lt200_in
-  ) %>%
-  pivot_longer(cols=c(`Eligible`,`CD4 done`,`CD4 < 200`))%>%
-  mutate(
-    name = factor(name,levels=c("Eligible","CD4 done","CD4 < 200"))
-  )%>%
-  mutate(
-    category="ART Initiation"
-  )
-
-art_casc_sum2%>%
-  ggplot()+
-  geom_bar(
-    aes(x=name,y=value,fill=category),
-    stat="identity"
-  )+theme(
-    aspect.ratio = 0.8,
-    #legend.position = "bottom",
-    #axis.text.x = element_text(angle = 65,hjust = 1.0),
-    legend.title = element_blank(),
-  )+labs(
-    title = "CD4 done by eligibility criteria, 2021",
-    y="Total"
-  )
+# This includes all other patients who did CD4 not belonging in any of the eligible 
+# categories
+other_cd4 <- vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans_data %>%
+  filter(
+    (
+      visit_dmy>=start_period & visit_dmy<=end_period) 
+    
+      # Exclude patients already list of no CD4 patients
+      & !(patient %in% no_cd4_pat_code)
+      & !(patient %in% new_init_pat_code)
+      & !(patient %in% returnees_pat_code)
+      & !(patient %in% high_vl_pat_code)
+    ) %>%
   
+  arrange(patient,desc(visit_dmy))
 
+#Unique patients
+other_cd4_dup <-other_cd4[duplicated(other_cd4[,pat_col_ind]),]
+other_cd4_data<-other_cd4[!duplicated(other_cd4[,pat_col_ind]),]
+
+#Get unique patient codes with no CD4 to be used to avoid duplicate patients
+other_cd4_pat_code <- unique(other_cd4_data$patient)
+
+#Bind rows to summary data
+summ_data_ahd <- summ_data_ahd %>%
+  rbind(
+    other_cd4_data %>%
+       mutate(
+        vis_year = year(visit_dmy)
+      )%>%
+      mutate(
+        category    = "Other patients",
+      )%>%
+      group_by(category) %>%
+      summarise(
+        eligible    = NA,
+        cd4_done    = sum(!is.na(cd4_value),na.rm = TRUE),
+        `%cd4_done` = NA, 
+        cd4_lt200   = sum(cd4_value<200,na.rm = TRUE),
+        `%cd4_lt200`= round((cd4_lt200/cd4_done),4)*100,
+        lam_done    = sum(cd4_value<200 & !is.na(tbm_value),na.rm = TRUE),
+        `%lam_done` = round((lam_done/cd4_lt200),4)*100,
+        crag_done   = sum(cd4_value<200 & !is.na(crag_value),na.rm = TRUE),
+        `%crag_done`= round((crag_done/cd4_lt200),4)*100,
+        lam_pos     = sum(cd4_value<200 & !is.na(tbm_value) & (tbm_value=="+"),na.rm = TRUE),
+        `%lam_pos`  = round((lam_pos/lam_done),4)*100,
+        crag_pos    = sum(cd4_value<200 & !is.na(crag_value) & (crag_value=="+"),na.rm = TRUE),
+        `%crag_pos` = round((crag_pos/crag_done),4)*100
+        
+      )
+  )
+
+
+# high_vl_casc<-high_vl_data%>%
+#   #Exclude initiations that might be part of the data (cross checking for data quality)
+#   filter( 
+#     !(visit_dmy == haart_dmy & method_into_art == 0)
+#   )%>%
+#   #Exclude patients who do not currently have a CD4 but have valid CD4 (<=3M)
+#   filter(
+#     !(is.na(cd4_value) & !is.na(last3cd4_value))
+#   )%>%
+#   mutate(
+#     quarter_year = quarter(visit_dmy, with_year = T),
+#     month_year   = format(as.Date(visit_dmy), "%Y-%m"),
+#   )%>%
+#   group_by(quarter_year)%>%
+#   summarise(
+#     tot_hvl        = n(),
+#     cd4_hvl        = sum(!is.na(cd4_value)),
+#     `% cd4_hvl`    = round((cd4_hvl/tot_hvl),4)*100,
+#   )
+
+
+###### TOTAL OF AHD CASCADE ######
+str(summ_data_ahd)
+summ_data_ahd <- summ_data_ahd %>%
+  adorn_totals(where = "row")
+
+#Update data in total now
+total_row <- tail(summ_data_ahd,1) %>%
+  mutate(
+    category    = "Total(patient)",
+    eligible    = NA,
+    `%cd4_done` = NA, 
+    `%cd4_lt200`= round((cd4_lt200/cd4_done),4)*100,
+    `%lam_done` = round((lam_done/cd4_lt200),4)*100,
+    `%crag_done`= round((crag_done/cd4_lt200),4)*100,
+    `%lam_pos`  = round((lam_pos/lam_done),4)*100,
+    `%crag_pos` = round((crag_pos/crag_done),4)*100
+  )
+
+summ_data_ahd[nrow(summ_data_ahd),] <-total_row
 
 ```
 
