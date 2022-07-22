@@ -1,0 +1,408 @@
+pacman::p_load(
+  rio,        # importing data  
+  here,       # relative file pathways
+  readxl,     # read excel
+  writexl,    # write excel
+  strex,      #String manipulation
+  janitor,    # data cleaning and tables
+  lubridate,  # working with dates
+  tidyverse,  # data management and visualization,
+  scales,     # easily convert proportions to percents  
+  labelled,   # Variable and values labelling
+  flextable,  # Format tables
+  RODBC       # Odbc database connection
+)
+
+# use here from the here package
+here <- here::here
+# use clean_names from the janitor package
+clean_names <- janitor::clean_names
+
+# load functions used from R scripts
+source_path <- here("R", "RScripts.R")
+source(source_path,local = knitr::knit_global())
+
+data_folder <- "data"
+image_folder <- "images"
+output_folder <- "output"
+
+###############################################################################
+#################   I. Importing & Exploring Data         #####################
+###################                                     #######################
+###############################################################################
+
+con<-RODBC::odbcDriverConnect("Driver={Microsoft Access Driver (*.mdb)};DBQ=C:/Users/Gauthier Abdala/Documents/RWD/TierNet/data/TierDESBanguiEloge_20220422.mdb")
+
+vis_raw <- RODBC::sqlFetch(con,"VIS") #Follow Up clinic Visit table
+pat_raw <- RODBC::sqlFetch(con,"PAT") #Socio demographic char. & outcome table
+lab_raw <- RODBC::sqlFetch(con,"LAB") #Laboratory data table
+dem_raw <- RODBC::sqlFetch(con,"DEM") #Demographic information
+art_raw <- RODBC::sqlFetch(con,"ART") #ART drugs information
+
+tb_raw        <- RODBC::sqlFetch(con,"TB")         #Tuberculosis Information
+vis_tb_raw    <- RODBC::sqlFetch(con,"VIS_TB")     #TB Visit Table
+transfers_raw <- RODBC::sqlFetch(con,"TRANSFERS")  #Transfer In/Out Table
+
+#Close DB Connection after getting the data
+RODBC::odbcClose(con)
+
+#############################################################################
+########################      II. Cleaning data    ##########################
+#############################################################################
+
+
+############# 1. Cleaning column names    #################
+###########################################################
+
+vis <- vis_raw %>% janitor::clean_names()
+pat <- pat_raw %>% janitor::clean_names()
+lab <- lab_raw %>% janitor::clean_names()
+dem <- dem_raw %>% janitor::clean_names()
+art <- art_raw %>% janitor::clean_names()
+
+#pregnancy <- pregnancy_raw  %>% janitor::clean_names()
+tb        <- tb_raw         %>% janitor::clean_names()
+vis_tb    <- vis_tb_raw     %>% janitor::clean_names()
+transfers <- transfers_raw  %>% janitor::clean_names()
+#vis_preg  <- vis_preg_raw   %>% janitor::clean_names()
+#infant    <- infant_raw     %>% janitor::clean_names()
+
+
+####### 2. Select,add and/or re order/rename columns #######
+############################################################
+vis <- vis %>%
+  select(patient, visit_dmy, tb_status, who_stage, next_visit_dmy)
+
+pat <- pat %>%
+  select(patient, cohort, facility, birth_dmy,gender, frsvis_dmy,hivp_dmy, haart,
+         haart_dmy, fhv_stage_who, tb_fhv, method_into_art, transfer_in_dmy, outcome,
+         outcome_dmy)
+
+lab <- lab %>%
+  select(patient, lab_dmy, lab_id, lab_v, lab_t, episode_type, episode_id)
+
+dem <- dem %>%
+  select(patient, folder_number)
+art <- art %>%
+  select(-c(art_rs,info_source))
+
+tb <- tb %>%
+  select(patient, reg_dmy, tb_start_dmy, tb_end_dmy, tb_outcome, episode_id)
+
+vis_tb <- vis_tb %>%
+  select(patient, visit_dmy, next_visit_dmy, episode_id)
+
+transfers <- transfers %>%
+  select(patient, episode_id, facility_from, facility_to, transfer_dmy, transfer_action)
+
+
+
+################ 3. Cleaning/replacing empty/null values     ##########
+#############################################################
+
+vis <-trim_data_columns(vis)
+vis[is.null(vis)  | vis == "NULL" | vis == ""] <- NA
+
+pat <-trim_data_columns(pat)
+pat[is.null(pat)  | pat == "NULL" | pat == ""] <- NA
+
+lab <-trim_data_columns(lab)
+lab[is.null(lab)  | lab == "NULL" | lab == ""] <- NA
+
+dem <-trim_data_columns(dem)
+dem[is.null(dem)  | dem == "NULL" | dem == ""] <- NA
+
+art <-trim_data_columns(art)
+art[is.null(art)  | art == "NULL" | art == ""] <- NA
+
+tb <-trim_data_columns(tb)
+tb[is.null(tb)  | tb == "NULL" | tb == ""] <- NA
+
+vis_tb <-trim_data_columns(vis_tb)
+vis_tb[is.null(vis_tb)  | vis_tb == "NULL" | vis_tb == ""] <- NA
+
+transfers <-trim_data_columns(transfers)
+transfers[is.null(transfers)  | transfers == "NULL" | transfers == ""] <- NA
+
+## Check if any of the dataframes have missing values
+colSums(is.na(vis))
+colSums(is.na(pat))
+colSums(is.na(lab))
+colSums(is.na(dem))
+colSums(is.na(art))
+colSums(is.na(tb))
+colSums(is.na(vis_tb))
+colSums(is.na(transfers))
+
+## replacing values in art tables with lookup values
+art_code <-sort(unique(art$art_id))
+art_regimen <- data.frame(
+  code  = c("J05AE08","J05AE10","J05AF01","J05AF04","J05AF05","J05AF06","J05AF07","J05AF09","J05AG01","J05AG03","J05AR10","J05AX12"),
+  ttt   = c("ATV","DRV","AZT","D4T","3TC","ABC","TDF","FTC","NVP","EFV","LPV","DTG")
+)
+
+
+#Match codes with corresponding regimens
+art$art_id <- art_regimen$ttt[match(unlist(art$art_id),art_regimen$code)]
+
+#Make art regimens as factor and order them
+art$art_id <- factor(art$art_id,
+                     levels = c("ABC","ATV","AZT","TDF","3TC","FTC","EFV","NVP","LPV","DTG"
+                                ,"DRV","D4T")
+)
+#Arrange art table data
+art <- art%>%
+  arrange(patient,art_sd_dmy,art_id)
+
+########### 4. Convert columns classes/add columns  #############
+#################################################################
+#is.date <- function(x) inherits(x, 'Date') #Used to check of column is date
+
+
+vis <- vis %>%
+  mutate(across(.cols = everything(), .fns = as.character)) %>% #Convert all columns to character class
+  mutate(
+    visit_dmy = parse_date(visit_dmy,"%Y-%m-%d"),
+    next_visit_dmy = parse_date(next_visit_dmy,"%Y-%m-%d"),
+    who_stage = parse_number(who_stage)
+  ) %>%
+  mutate(
+    visit_dmy = as.Date(as.numeric(visit_dmy),origin ="1970-01-01"),
+    next_visit_dmy = as.Date(as.numeric(next_visit_dmy),origin ="1970-01-01"),
+    vis_year = year(visit_dmy)
+  )
+
+
+pat <- pat %>%
+  mutate(across(.cols = everything(), .fns = as.character)) %>% #Convert all columns to character class
+  mutate(
+    birth_dmy = parse_date(birth_dmy,"%Y-%m-%d"),
+    frsvis_dmy = parse_date(frsvis_dmy,"%Y-%m-%d"),
+    hivp_dmy = parse_date(hivp_dmy,"%Y-%m-%d"),
+    haart_dmy = parse_date(haart_dmy,"%Y-%m-%d"),
+    transfer_in_dmy = parse_date(transfer_in_dmy,"%Y-%m-%d"),
+    outcome_dmy = parse_date(outcome_dmy,"%Y-%m-%d"),
+  ) %>%
+  mutate(
+    birth_dmy = as.Date(as.numeric(birth_dmy),origin ="1970-01-01"),
+    frsvis_dmy = as.Date(as.numeric(frsvis_dmy),origin ="1970-01-01"),
+    hivp_dmy = as.Date(as.numeric(hivp_dmy),origin ="1970-01-01"),
+    haart_dmy = as.Date(as.numeric(haart_dmy),origin ="1970-01-01"),
+    transfer_in_dmy = as.Date(as.numeric(transfer_in_dmy),origin ="1970-01-01"),
+    outcome_dmy = as.Date(as.numeric(outcome_dmy),origin ="1970-01-01"),
+  ) %>%
+  mutate(
+    #Add enrollment date
+    enrol_date = case_when(
+      method_into_art =="1" ~ transfer_in_dmy,
+      method_into_art =="0" ~ haart_dmy 
+    ),
+    #Add enrollment year
+    enrol_year  = year(enrol_date)
+  )
+
+lab <- lab %>%
+  mutate(across(.cols = everything(), .fns = as.character)) %>% #Convert all columns to character class
+  mutate(
+    lab_dmy = parse_date(lab_dmy,"%Y-%m-%d"),
+    lab_v = parse_number(lab_v)
+  ) %>%
+  mutate(
+    lab_dmy = as.Date(as.numeric(lab_dmy),origin ="1970-01-01")
+  )
+
+art <- art %>%
+  mutate(across(.cols = everything(), .fns = as.character)) %>% #Convert all columns to character class
+  mutate(
+    art_sd_dmy = parse_date(art_sd_dmy,"%Y-%m-%d"),
+    art_ed_dmy = parse_date(art_ed_dmy,"%Y-%m-%d"),
+  )
+
+
+tb <- tb %>%
+  mutate(across(.cols = everything(), .fns = as.character)) %>% #Convert all columns to character class
+  mutate(
+    reg_dmy = parse_date(reg_dmy,"%Y-%m-%d"),
+    tb_start_dmy = parse_date(tb_start_dmy,"%Y-%m-%d"),
+    tb_end_dmy = parse_date(tb_end_dmy,"%Y-%m-%d"),
+  ) %>%
+  mutate(
+    reg_dmy = as.Date(as.numeric(reg_dmy),origin ="1970-01-01"),
+    tb_start_dmy = as.Date(as.numeric(tb_start_dmy),origin ="1970-01-01"),
+    tb_end_dmy = as.Date(as.numeric(tb_end_dmy),origin ="1970-01-01"),
+  )
+
+vis_tb <- vis_tb %>%
+  mutate(across(.cols = everything(), .fns = as.character)) %>% #Convert all columns to character class
+  mutate(
+    visit_dmy = parse_date(visit_dmy,"%Y-%m-%d"),
+    next_visit_dmy = parse_date(next_visit_dmy,"%Y-%m-%d"),
+  ) %>%
+  mutate(
+    visit_dmy = as.Date(as.numeric(visit_dmy),origin ="1970-01-01"),
+    next_visit_dmy = as.Date(as.numeric(next_visit_dmy),origin ="1970-01-01")
+  )
+
+transfers <- transfers %>%
+  mutate(across(.cols = everything(), .fns = as.character)) %>% #Convert all columns to character class
+  mutate(
+    transfer_dmy = parse_date(transfer_dmy,"%Y-%m-%d")
+  ) %>%
+  mutate(
+    transfer_dmy = as.Date(as.numeric(transfer_dmy),origin ="1970-01-01")
+  )
+
+# transfers <- transfers %>%
+#   filter(transfer_dmy >as.Date("2017-12-31") & facility_from == "CH KABINDA")
+
+
+################ 5. Cleaning duplicate rows      #############
+##############################################################
+pat[duplicated(pat),]
+pat<-unique(pat)
+
+vis_duplicate <-vis[duplicated(vis),]
+vis<-unique(vis)
+
+lab_duplicate <-lab[duplicated(lab),]
+lab<-unique(lab)
+#TODO Cleaning of lab data for same exame encoded same date, different values...
+
+art <-unique(art)
+
+tb_duplicate <-tb[duplicated(tb),]
+tb<-unique(tb)
+
+vis_tb_duplicate <-vis_tb[duplicated(vis_tb),]
+vis_tb<-unique(vis_tb)
+
+transfers_duplicate <-transfers[duplicated(transfers),]
+transfers<-unique(transfers)
+
+################# 6. Merge tables                #################
+##################################################################
+
+patient_full <-left_join(pat,dem,"patient")
+
+vis_data <- left_join(vis,dem,"patient") %>%
+  left_join(pat,"patient")
+
+art_data <-left_join(art,pat,"patient")
+
+################# 7. Add variables/values labels    ##############
+##################################################################
+# labelled::val_labels(vis_data$gender)  <-c("1" = "Male", "2" = "Female", "95" = NA, "99" = NA)
+# labelled::val_labels(vis_data$haart)   <-c("0" = "Not on ART", "1" = "on ART")
+# labelled::val_labels(vis_data$outcome) <-c("10"= "Deceased", "20" = "In care", "30" = "Transfered Out", "40" = "LTFU", "95" = "Unknown")
+# labelled::val_labels(vis_data$method_in_art_named) <-c("0" = "New", "1" = "Transfer In", "88" = NA )
+
+
+## Remove unused/intermediate objects from memory
+
+rm(list = c("dem_raw","lab_raw","pat_raw","tb_raw","transfers_raw","vis_raw","vis_tb_raw"))
+
+#############################################################################
+##############      III. Analyzing data/presenting    #######################
+#############################################################################
+
+################ PATIENTS ON DTG ######################
+#######################################################
+
+dtg_pat <- art_data %>%
+  dplyr::filter(art_id =="DTG") %>%
+  dplyr::select(patient,birth_dmy,haart_dmy,art_id,regimen_line,art_sd_dmy,art_ed_dmy)
+
+## Pivot data to display drugs start and end date per patient
+art_data_pivot <- art_data %>%
+  pivot_wider(id_cols = c(patient,art_sd_dmy,art_ed_dmy),names_from =art_id,values_from = art_id)
+
+## Merge art data and patient demo data
+art_patient_data <-art_data_pivot %>%
+  left_join(pat,"patient") %>%
+  left_join(dem,"patient") %>%
+  
+  ## Only select required variables
+  select(patient,folder_number,cohort,facility,birth_dmy,gender,method_into_art,art_sd_dmy,art_ed_dmy,`TDF`:`DRV`)%>%
+  
+  ## Add extra columns
+  mutate(
+    period_drug_start = quarter(art_sd_dmy, with_year = T),
+    year_drug_start   = year(art_sd_dmy),
+    #Calculate age at drug/regimen start in years and rounding it(ceiling())
+    age_drug_start    = ceiling(interval(birth_dmy,art_sd_dmy) %/% days(1) / (365)),
+    age_drug_st_cat   = case_when(
+      age_drug_start >= 15 ~ "adult",
+      age_drug_start  < 15 ~ "paediatric",
+      TRUE ~ ""
+    )
+  ) %>%
+  
+  ## Reorder variables
+  select(folder_number,birth_dmy,age_drug_start,age_drug_st_cat,gender,art_sd_dmy,period_drug_start,year_drug_start,art_ed_dmy,TDF:DRV,everything())
+
+
+#### DESCRIPTIVE ANALYSIS FOR PATIENTS ON DTG #################
+reporting_year <- year(as.Date("2021/01/01"))
+
+#Update gender values
+art_patient_data$gender[art_patient_data$gender =="1"] <- "male"
+art_patient_data$gender[art_patient_data$gender =="2"] <- "female"
+
+dtg_art_patient_data <- art_patient_data %>%
+  filter(
+    !is.na(DTG) & 
+      year_drug_start == reporting_year)
+
+## Summarizing DTG patient data per quarter
+dtg_art_summary <- dtg_art_patient_data %>%
+  group_by(period_drug_start,age_drug_st_cat)%>%
+  summarize(
+    total = n()
+  )
+
+dtg_art_summary %>%  
+  ggplot() +
+  geom_bar(
+    stat = "identity",
+    color = "#661a00",
+    position = position_stack(reverse = FALSE),
+    aes(x = period_drug_start,y = total,fill = age_drug_st_cat,
+    )
+  ) +
+  geom_text(#Show data labels
+    aes(label = total,x = period_drug_start, y = total),
+    vjust = 0.9)+
+  theme(
+    plot.title = element_text(size = 11,hjust = 0.5),
+    aspect.ratio = 0.8,
+    legend.position = "bottom",
+    legend.title = element_blank(),
+  )
+
+## Summarizing DTG paeds patient data per quarter per gender
+dtg_art_summary_paed <- dtg_art_patient_data %>%
+  filter(age_drug_st_cat == "paediatric")%>%
+  group_by(period_drug_start,gender)%>%
+  summarize(
+    total = n()
+  )
+  
+## Plotting the data
+dtg_art_summary_paed %>%  
+  ggplot() +
+  geom_bar(
+    stat = "identity",
+    color = "#661a00",
+    position = position_stack(reverse = FALSE),
+    aes(x = period_drug_start,y = total,fill = gender,
+    )
+  ) +
+  geom_text(#Show data labels
+    aes(label = total,x = period_drug_start, y = total),
+    vjust = 0.9)+
+  theme(
+    plot.title = element_text(size = 11,hjust = 0.5),
+    aspect.ratio = 0.8,
+    legend.position = "bottom",
+    legend.title = element_blank(),
+  )
