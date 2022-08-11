@@ -31,7 +31,7 @@ output_folder <- "output"
 ###################                                     #######################
 ###############################################################################
 
-con<-RODBC::odbcDriverConnect("Driver={Microsoft Access Driver (*.mdb)};DBQ=C:/Users/Gauthier Abdala/Documents/RWD/TierNet/data/TierDESBanguiEloge_20220422.mdb")
+con<-RODBC::odbcDriverConnect("Driver={Microsoft Access Driver (*.mdb)};DBQ=C:/Users/Gauthier Abdala/Documents/RWD/TierNet/data/TierDESKinshasa042022.mdb")
 
 vis_raw <- RODBC::sqlFetch(con,"VIS") #Follow Up clinic Visit table
 pat_raw <- RODBC::sqlFetch(con,"PAT") #Socio demographic char. & outcome table
@@ -145,14 +145,21 @@ art_regimen <- data.frame(
 #Match codes with corresponding regimens
 art$art_id <- art_regimen$ttt[match(unlist(art$art_id),art_regimen$code)]
 
+
 #Make art regimens as factor and order them
+art$art_id <- as.factor(art$art_id)
 art$art_id <- factor(art$art_id,
                      levels = c("ABC","ATV","AZT","TDF","3TC","FTC","EFV","NVP","LPV","DTG"
                                 ,"DRV","D4T")
 )
+
 #Arrange art table data
 art <- art%>%
-  arrange(patient,art_sd_dmy,art_id)
+  arrange(patient,art_sd_dmy,!is.na(art_ed_dmy), art_id)
+
+## Replace codes with values in outcomes
+
+pat$outcome <- dplyr::recode(pat$outcome,"10"= "Deceased-HIV","11"= "Deceased-Unknow", "20" = "In-Care", "30" = "Trans-Out", "40" = "LTFU", "95" = "Unknown") 
 
 ########### 4. Convert columns classes/add columns  #############
 #################################################################
@@ -212,7 +219,7 @@ lab <- lab %>%
   )
 
 art <- art %>%
-  mutate(across(.cols = everything(), .fns = as.character)) %>% #Convert all columns to character class
+  mutate(across(.cols = art_sd_dmy:art_ed_dmy, .fns = as.character)) %>% #Convert date variables to character class
   mutate(
     art_sd_dmy = parse_date(art_sd_dmy,"%Y-%m-%d"),
     art_ed_dmy = parse_date(art_ed_dmy,"%Y-%m-%d"),
@@ -287,13 +294,13 @@ patient_full <-left_join(pat,dem,"patient")
 vis_data <- left_join(vis,dem,"patient") %>%
   left_join(pat,"patient")
 
-art_data <-left_join(art,pat,"patient")
+art_data <-left_join(art,pat,"patient")%>%
+  left_join(dem,"patient")
 
 ################# 7. Add variables/values labels    ##############
 ##################################################################
 # labelled::val_labels(vis_data$gender)  <-c("1" = "Male", "2" = "Female", "95" = NA, "99" = NA)
 # labelled::val_labels(vis_data$haart)   <-c("0" = "Not on ART", "1" = "on ART")
-# labelled::val_labels(vis_data$outcome) <-c("10"= "Deceased", "20" = "In care", "30" = "Transfered Out", "40" = "LTFU", "95" = "Unknown")
 # labelled::val_labels(vis_data$method_in_art_named) <-c("0" = "New", "1" = "Transfer In", "88" = NA )
 
 
@@ -301,28 +308,25 @@ art_data <-left_join(art,pat,"patient")
 
 rm(list = c("dem_raw","lab_raw","pat_raw","tb_raw","transfers_raw","vis_raw","vis_tb_raw"))
 
+
+
 #############################################################################
 ##############      III. Analyzing data/presenting    #######################
 #############################################################################
 
-################ PATIENTS ON DTG ######################
-#######################################################
-
-dtg_pat <- art_data %>%
-  dplyr::filter(art_id =="DTG") %>%
-  dplyr::select(patient,birth_dmy,haart_dmy,art_id,regimen_line,art_sd_dmy,art_ed_dmy)
-
 ## Pivot data to display drugs start and end date per patient
+
 art_data_pivot <- art_data %>%
-  pivot_wider(id_cols = c(patient,art_sd_dmy,art_ed_dmy),names_from =art_id,values_from = art_id)
+  arrange(art_id) %>%
+  pivot_wider(id_cols = c(patient,folder_number,art_sd_dmy,art_ed_dmy),names_from =art_id,values_from = art_id)
 
 ## Merge art data and patient demo data
 art_patient_data <-art_data_pivot %>%
   left_join(pat,"patient") %>%
-  left_join(dem,"patient") %>%
   
   ## Only select required variables
-  select(patient,folder_number,cohort,facility,birth_dmy,gender,method_into_art,art_sd_dmy,art_ed_dmy,`TDF`:`DRV`)%>%
+  ## @TODO : Make selection of drugs dynamic
+  select(patient,folder_number,cohort,facility,birth_dmy,gender,method_into_art,outcome,outcome_dmy,art_sd_dmy,art_ed_dmy,`ABC`:`D4T`)%>%
   
   ## Add extra columns
   mutate(
@@ -338,71 +342,54 @@ art_patient_data <-art_data_pivot %>%
   ) %>%
   
   ## Reorder variables
-  select(folder_number,birth_dmy,age_drug_start,age_drug_st_cat,gender,art_sd_dmy,period_drug_start,year_drug_start,art_ed_dmy,TDF:DRV,everything())
+  ## @TODO : Make selection of drugs dynamic
+  select(folder_number,birth_dmy,age_drug_start,age_drug_st_cat,gender,art_sd_dmy,period_drug_start,year_drug_start,art_ed_dmy,ABC:D4T,everything())
 
+## Combine drugs into regimens (merging drugs columns)
+art_patient_data <- art_patient_data %>%
+  unite(
+    "drugs",`ABC`:`DRV`,remove = FALSE,na.rm = TRUE,sep = "/"  
+  )%>%
+  arrange(patient,art_sd_dmy,!is.na(art_ed_dmy))
 
-#### DESCRIPTIVE ANALYSIS FOR PATIENTS ON DTG #################
-reporting_year <- year(as.Date("2021/01/01"))
+###############################
+vis_data_filt <- vis_data %>%
+  filter(visit_dmy >=as.Date("2021-01-01") & visit_dmy <=as.Date("2021-12-31"))
 
-#Update gender values
-art_patient_data$gender[art_patient_data$gender =="1"] <- "male"
-art_patient_data$gender[art_patient_data$gender =="2"] <- "female"
-
-dtg_art_patient_data <- art_patient_data %>%
+vis_regimen <- sqldf::sqldf(
+  "select vis.patient,vis.folder_number,vis.visit_dmy,vis.birth_dmy,vis.gender,art.art_sd_dmy,art.art_ed_dmy,art.drugs from vis_data_filt vis
+    left join art_patient_data art on 
+        vis.patient = art.patient and (art.art_sd_dmy <= vis.visit_dmy ) and ( (art.art_ed_dmy IS NULL) or art.art_ed_dmy > vis.visit_dmy  )"
+) %>%
+  ## Look at variables that are of interest to us
+  select(patient,folder_number,visit_dmy,birth_dmy,gender,drugs,art_sd_dmy,art_ed_dmy ) %>%
+  ## Exclude visits with no drugs/regimens
   filter(
-    !is.na(DTG) & 
-      year_drug_start == reporting_year)
-
-## Summarizing DTG patient data per quarter
-dtg_art_summary <- dtg_art_patient_data %>%
-  group_by(period_drug_start,age_drug_st_cat)%>%
-  summarize(
-    total = n()
+    drugs !=""
   )
 
-dtg_art_summary %>%  
-  ggplot() +
-  geom_bar(
-    stat = "identity",
-    color = "#661a00",
-    position = position_stack(reverse = FALSE),
-    aes(x = period_drug_start,y = total,fill = age_drug_st_cat,
-    )
-  ) +
-  geom_text(#Show data labels
-    aes(label = total,x = period_drug_start, y = total),
-    vjust = 0.9)+
-  theme(
-    plot.title = element_text(size = 11,hjust = 0.5),
-    aspect.ratio = 0.8,
-    legend.position = "bottom",
-    legend.title = element_blank(),
-  )
+## Clear duplicate visit rows based on patient data (folder_number,dob,sex) and visit data
 
-## Summarizing DTG paeds patient data per quarter per gender
-dtg_art_summary_paed <- dtg_art_patient_data %>%
-  filter(age_drug_st_cat == "paediatric")%>%
-  group_by(period_drug_start,gender)%>%
-  summarize(
-    total = n()
-  )
+vis_data_reg_dup <- vis_regimen[duplicated(vis_regimen[,1:6]),]
+
+vis_data_reg<-vis_regimen[!duplicated(vis_regimen[,1:6]),] %>%
+
+## Pivot data to wider formats
+pivot_wider(id_cols = c(patient,folder_number,visit_dmy,birth_dmy,gender),names_from = drugs,values_from = drugs) %>%
+
+## Merge drugs columns
+## @TODO : Make selection of drugs columns dynamic
   
-## Plotting the data
-dtg_art_summary_paed %>%  
-  ggplot() +
-  geom_bar(
-    stat = "identity",
-    color = "#661a00",
-    position = position_stack(reverse = FALSE),
-    aes(x = period_drug_start,y = total,fill = gender,
-    )
-  ) +
-  geom_text(#Show data labels
-    aes(label = total,x = period_drug_start, y = total),
-    vjust = 0.9)+
-  theme(
-    plot.title = element_text(size = 11,hjust = 0.5),
-    aspect.ratio = 0.8,
-    legend.position = "bottom",
-    legend.title = element_blank(),
+unite(
+  "regimen",`TDF/3TC/DTG`:`AZT/TDF`,remove = TRUE,na.rm = TRUE,sep = "/"  
+) %>%
+  
+  mutate(
+    counting = nchar(regimen)
   )
+
+#####
+### NEXT STEPS
+# 1. Look into drugs that are repeated in regimens, clean them up
+# 2. Look in a way to select drugs in a dynamic way
+
