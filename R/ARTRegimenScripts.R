@@ -386,10 +386,26 @@ unite(
   
   mutate(
     counting = nchar(regimen)
+  ) %>%
+  mutate(
+    ## Creating list with drugs in a regimen based on forward slash
+   regimen_split =str_split(regimen,"/")
+  ) %>%
+  mutate(
+    ## Remove drugs appearing as duplicate in regimens
+    regimen_final = sapply(regimen_split,unique)
+  ) %>%
+  mutate(
+    ## Format display of regimens back with forward slashes
+    regimen_final = sapply(regimen_final,function(x) paste(x,collapse = "/"))
   )
+
 
 #####
 ### NEXT STEPS
-# 1. Look into drugs that are repeated in regimens, clean them up
+# 1. Look into drugs that are repeated in regimens, clean them up == okay
 # 2. Look in a way to select drugs in a dynamic way
+# 3. Check drugs that appear as one drug regimen
+# 4. Add regimens start date
+# 5. Add last VL based on regimens start date
 
