@@ -98,7 +98,7 @@ transfers <- transfers %>%
 
 
 ################ 3. Cleaning/replacing empty/null values     ##########
-#############################################################
+#######################################################################
 
 vis <-trim_data_columns(vis)
 vis[is.null(vis)  | vis == "NULL" | vis == ""] <- NA
@@ -135,6 +135,7 @@ colSums(is.na(vis_tb))
 colSums(is.na(transfers))
 
 ## replacing values in art tables with lookup values
+
 art_code <-sort(unique(art$art_id))
 art_regimen <- data.frame(
   code  = c("J05AE08","J05AE10","J05AF01","J05AF04","J05AF05","J05AF06","J05AF07","J05AF09","J05AG01","J05AG03","J05AR10","J05AX12"),
@@ -155,6 +156,9 @@ art$art_id <- factor(art$art_id,
 
 #Arrange art table data
 art <- art%>%
+  ## Remove observations with blank art_id
+  filter(!is.na(art_id)) %>%
+  
   arrange(patient,art_sd_dmy,!is.na(art_ed_dmy), art_id)
 
 ## Replace codes with values in outcomes
@@ -400,12 +404,63 @@ unite(
     regimen_final = sapply(regimen_final,function(x) paste(x,collapse = "/"))
   )
 
-
+# Cross check art_cur_reg_lvl_data
+## Go back to how art_cur_reg is generating the data
 #####
-### NEXT STEPS
-# 1. Look into drugs that are repeated in regimens, clean them up == okay
-# 2. Look in a way to select drugs in a dynamic way
-# 3. Check drugs that appear as one drug regimen
-# 4. Add regimens start date
-# 5. Add last VL based on regimens start date
+## Get current regimens
+art_cur_reg <- art_patient_data %>%
+  filter(is.na(art_ed_dmy) )
+art_cur_reg <-  sqldf::sqldf("
+  select d.patient,d.folder_number,d.birth_dmy,d.gender,d.outcome,d.outcome_dmy, d.art_sd_dmy,d.art_ed_dmy,d.drugs,d1.drugs as drugs1
+    from art_cur_reg d
+    left join art_cur_reg d1 
+      on d.patient = d1.patient and (d1.art_sd_dmy <= d.art_sd_dmy )
+      and d.art_ed_dmy IS NULL
+      and ( (d1.art_ed_dmy IS NULL) or d1.art_ed_dmy > d.art_sd_dmy  )
+      and d.drugs <> d1.drugs")
+
+
+art_cur_reg <-art_cur_reg %>%
+  pivot_wider(id_cols = c(patient,folder_number,birth_dmy,gender,outcome,outcome_dmy,art_sd_dmy,art_ed_dmy,drugs),names_from = drugs1,values_from = drugs1) %>%
+  
+  unite(
+    "cur_regimen",9:ncol(.),remove = TRUE,na.rm = TRUE,sep = "/"  
+  ) %>%
+  
+  arrange(desc(art_sd_dmy))
+
+## Get unique regimens
+art_cur_reg_data<-art_cur_reg[!duplicated(art_cur_reg[,1:6]),]
+
+
+## Get Last VL data
+
+lab_data_vl <-lab %>%
+  filter((lab_id =="RNA") & !is.na(lab_v))
+
+## Get last VL within a year of current art drugs start date
+art_cur_reg_lvl<-sqldf::sqldf(
+  "select data.*,vl.lab_dmy,vl.lab_v
+    from art_cur_reg data
+    left join lab_data_vl vl
+      on data.patient = vl.patient
+        and vl.lab_dmy between (data.art_sd_dmy -365) and (data.art_sd_dmy)"
+)%>%
+  rename(
+    lastvl_date = lab_dmy,
+    lastvl_value= lab_v
+  ) %>%
+  
+  arrange(desc(lastvl_date))
+
+## Unique regimen data
+art_cur_reg_lvl_data<-art_cur_reg_lvl[!duplicated(art_cur_reg_lvl[,1:9]),] %>%
+  arrange(patient,desc(art_sd_dmy))
+
+test <- art_cur_reg_lvl_data[!duplicated(art_cur_reg_lvl_data[,1:6]),] %>%
+  filter(outcome == "In-Care")
+
+## NEXT STEPS
+## 1. Make sure order of drugs in regimen is okay
+## 2. Add age at regimen start and age at reporting period
 
