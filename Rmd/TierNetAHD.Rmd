@@ -1,32 +1,12 @@
 ---
 title: "Tiernet"
 author: "Gauthier A."
-date: "18/11/2021"
+date: "06/09/2022"
 output: html_document
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-
-pacman::p_load(
-  rio,        # importing data  
-  here,       # relative file pathways
-  readxl,     # read excel
-  writexl,    # write excel
-  #skimr,      # Exploring data
-  janitor,    # data cleaning and tables
-  lubridate,  # working with dates
-  epikit,     # age_categories() function
-  tidyverse,  # data management and visualization,
-  #gtsummary,  # summary statistics and tests,
-  #rstatix,    # summary statistics and statistical tests
-  scales,     # easily convert proportions to percents  
-  labelled,   # Variable and values labelling
-  flextable,  # Format tables,
-  sqldf,      #sql queries
-  RODBC       # Odbc database connection
-)
-
 
 # use here from the here package
 here <- here::here
@@ -43,262 +23,40 @@ data_folder <- "data"
 image_folder <- "images"
 output_folder <- "output"
 
+start_period <-as.Date("2022/04/01")
+end_period   <-as.Date("2022/06/30")
+
+pat_col_ind  <- 4 #Patient column index in the data frame
+days_ltfup   <-90 #Days for ltfu. This can be context specific
 
 ```
-
-```{r, include=FALSE}
-
-###############################################################################
-#################   I. Importing & Exploring Data         #####################
-###################   Version of Tier.net : 1.13.4      #######################
-###############################################################################
-
-con<-RODBC::odbcDriverConnect("Driver={Microsoft Access Driver (*.mdb)};DBQ=C:/Users/Gauthier Abdala/Documents/RWD/TierNet/data/TierDESKinshasa042022.mdb")
-
-vis_raw <- RODBC::sqlFetch(con,"VIS") #Follow Up clinic Visit table
-pat_raw <- RODBC::sqlFetch(con,"PAT") #Socio demographic char. & outcome table
-lab_raw <- RODBC::sqlFetch(con,"LAB") #Laboratory data table
-dem_raw <- RODBC::sqlFetch(con,"DEM") #Demographic information
-
-#pregnancy_raw <- RODBC::sqlFetch(con,"PREGNANCY")  #Pregnancy information
-tb_raw        <- RODBC::sqlFetch(con,"TB")         #Tuberculosis Information
-vis_tb_raw    <- RODBC::sqlFetch(con,"VIS_TB")     #TB Visit Table
-transfers_raw <- RODBC::sqlFetch(con,"TRANSFERS")  #Transfer In/Out Table
-#vis_preg_raw  <- RODBC::sqlFetch(con,"VIS_PREG")   #Antenatal Care
-#infant_raw    <- RODBC::sqlFetch(con,"INFANT")     #Labour and Delivery
-
-
-#############################################################################
-########################      II. Cleaning data    ##########################
-#############################################################################
-
-
-############# 1. Cleaning column names    #################
-###########################################################
-
-vis <- vis_raw %>% janitor::clean_names()
-pat <- pat_raw %>% janitor::clean_names()
-lab <- lab_raw %>% janitor::clean_names()
-dem <- dem_raw %>% janitor::clean_names()
-
-#pregnancy <- pregnancy_raw  %>% janitor::clean_names()
-tb        <- tb_raw         %>% janitor::clean_names()
-vis_tb    <- vis_tb_raw     %>% janitor::clean_names()
-transfers <- transfers_raw  %>% janitor::clean_names()
-#vis_preg  <- vis_preg_raw   %>% janitor::clean_names()
-#infant    <- infant_raw     %>% janitor::clean_names()
-
-
-####### 2. Select,add and/or re order/rename columns #######
-############################################################
-vis <- vis %>%
-  select(patient, visit_dmy, tb_status, who_stage, next_visit_dmy)
-
-pat <- pat %>%
-  select(patient, cohort, facility, birth_dmy,gender, frsvis_dmy,hivp_dmy, haart,
-         haart_dmy, fhv_stage_who, tb_fhv, method_into_art, transfer_in_dmy, outcome,
-         outcome_dmy)
-
-lab <- lab %>%
-  select(patient, lab_dmy, lab_id, lab_v, lab_t, episode_type, episode_id)
-
-dem <- dem %>%
-  select(patient, folder_number)
-
-tb <- tb %>%
-  select(patient, reg_dmy, tb_start_dmy, tb_end_dmy, tb_outcome, episode_id)
-
-vis_tb <- vis_tb %>%
-  select(patient, visit_dmy, next_visit_dmy, episode_id)
-
-transfers <- transfers %>%
-  select(patient, episode_id, facility_from, facility_to, transfer_dmy, transfer_action)
-
-
-
-################ 3. Cleaning empty/null values     ##########
-#############################################################
-
-vis <-trim_data_columns(vis)
-vis[is.null(vis)  | vis == "NULL" | vis == ""] <- NA
-
-pat <-trim_data_columns(pat)
-pat[is.null(pat)  | pat == "NULL" | pat == ""] <- NA
-
-lab <-trim_data_columns(lab)
-lab[is.null(lab)  | lab == "NULL" | lab == ""] <- NA
-
-dem <-trim_data_columns(dem)
-dem[is.null(dem)  | dem == "NULL" | dem == ""] <- NA
-
-tb <-trim_data_columns(tb)
-tb[is.null(tb)  | tb == "NULL" | tb == ""] <- NA
-
-vis_tb <-trim_data_columns(vis_tb)
-vis_tb[is.null(vis_tb)  | vis_tb == "NULL" | vis_tb == ""] <- NA
-
-transfers <-trim_data_columns(transfers)
-transfers[is.null(transfers)  | transfers == "NULL" | transfers == ""] <- NA
-
-
-########### 4. Convert columns classes/add columns  #############
-#################################################################
-#is.date <- function(x) inherits(x, 'Date') #Used to check of column is date
-
-
-vis <- vis %>%
-  mutate(across(.cols = everything(), .fns = as.character)) %>% #Convert all columns to character class
-  mutate(
-    visit_dmy = parse_date(visit_dmy,"%Y-%m-%d"),
-    next_visit_dmy = parse_date(next_visit_dmy,"%Y-%m-%d"),
-    who_stage = parse_number(who_stage)
-  ) %>%
-  mutate(
-    visit_dmy = as.Date(as.numeric(visit_dmy),origin ="1970-01-01"),
-    next_visit_dmy = as.Date(as.numeric(next_visit_dmy),origin ="1970-01-01"),
-    vis_year = year(visit_dmy)
-  )
-
-
-pat <- pat %>%
-  mutate(across(.cols = everything(), .fns = as.character)) %>% #Convert all columns to character class
-  mutate(
-    birth_dmy = parse_date(birth_dmy,"%Y-%m-%d"),
-    frsvis_dmy = parse_date(frsvis_dmy,"%Y-%m-%d"),
-    hivp_dmy = parse_date(hivp_dmy,"%Y-%m-%d"),
-    haart_dmy = parse_date(haart_dmy,"%Y-%m-%d"),
-    transfer_in_dmy = parse_date(transfer_in_dmy,"%Y-%m-%d"),
-    outcome_dmy = parse_date(outcome_dmy,"%Y-%m-%d"),
-  ) %>%
-  mutate(
-    birth_dmy = as.Date(as.numeric(birth_dmy),origin ="1970-01-01"),
-    frsvis_dmy = as.Date(as.numeric(frsvis_dmy),origin ="1970-01-01"),
-    hivp_dmy = as.Date(as.numeric(hivp_dmy),origin ="1970-01-01"),
-    haart_dmy = as.Date(as.numeric(haart_dmy),origin ="1970-01-01"),
-    transfer_in_dmy = as.Date(as.numeric(transfer_in_dmy),origin ="1970-01-01"),
-    outcome_dmy = as.Date(as.numeric(outcome_dmy),origin ="1970-01-01"),
-    ) %>%
-  mutate(
-     #Add enrollment date
-    enrol_date = case_when(
-      method_into_art =="1" ~ transfer_in_dmy,
-      method_into_art =="0" ~ haart_dmy 
-    ),
-    #Add enrollment year
-    enrol_year  = year(enrol_date)
-  )
-
-lab <- lab %>%
-  mutate(across(.cols = everything(), .fns = as.character)) %>% #Convert all columns to character class
-  mutate(
-    lab_dmy = parse_date(lab_dmy,"%Y-%m-%d"),
-    lab_v = parse_number(lab_v)
-  ) %>%
-  mutate(
-    lab_dmy = as.Date(as.numeric(lab_dmy),origin ="1970-01-01")
-    )
-
-
-tb <- tb %>%
-  mutate(across(.cols = everything(), .fns = as.character)) %>% #Convert all columns to character class
-  mutate(
-    reg_dmy = parse_date(reg_dmy,"%Y-%m-%d"),
-    tb_start_dmy = parse_date(tb_start_dmy,"%Y-%m-%d"),
-    tb_end_dmy = parse_date(tb_end_dmy,"%Y-%m-%d"),
-  ) %>%
-  mutate(
-    reg_dmy = as.Date(as.numeric(reg_dmy),origin ="1970-01-01"),
-    tb_start_dmy = as.Date(as.numeric(tb_start_dmy),origin ="1970-01-01"),
-    tb_end_dmy = as.Date(as.numeric(tb_end_dmy),origin ="1970-01-01"),
-    )
-
-vis_tb <- vis_tb %>%
-  mutate(across(.cols = everything(), .fns = as.character)) %>% #Convert all columns to character class
-  mutate(
-    visit_dmy = parse_date(visit_dmy,"%Y-%m-%d"),
-    next_visit_dmy = parse_date(next_visit_dmy,"%Y-%m-%d"),
-  ) %>%
-  mutate(
-    visit_dmy = as.Date(as.numeric(visit_dmy),origin ="1970-01-01"),
-    next_visit_dmy = as.Date(as.numeric(next_visit_dmy),origin ="1970-01-01")
-    )
-
-transfers <- transfers %>%
-  mutate(across(.cols = everything(), .fns = as.character)) %>% #Convert all columns to character class
-  mutate(
-    transfer_dmy = parse_date(transfer_dmy,"%Y-%m-%d")
-  ) %>%
-  mutate(
-    transfer_dmy = as.Date(as.numeric(transfer_dmy),origin ="1970-01-01")
-    )
-
-# transfers <- transfers %>%
-#   filter(transfer_dmy >as.Date("2017-12-31") & facility_from == "CH KABINDA")
-
-
-################ 5. Cleaning duplicate rows      #############
-##############################################################
-pat[duplicated(pat),]
-pat<-unique(pat)
-
-vis_duplicate <-vis[duplicated(vis),]
-vis<-unique(vis)
-
-lab_duplicate <-lab[duplicated(lab),]
-lab<-unique(lab)
-#TODO Cleaning of lab data for same exame encoded same date, different values...
-
-tb_duplicate <-tb[duplicated(tb),]
-tb<-unique(tb)
-
-vis_tb_duplicate <-vis_tb[duplicated(vis_tb),]
-vis_tb<-unique(vis_tb)
-
-transfers_duplicate <-transfers[duplicated(transfers),]
-transfers<-unique(transfers)
-
-################# 5. Merge tables                #################
-##################################################################
-
-patient_full <-left_join(pat,dem,"patient")
-
-vis_data <- left_join(vis,dem,"patient") %>%
-  left_join(pat,"patient")
-
-
-
-################# 6. Add variables/values labels    ##############
-##################################################################
-# labelled::val_labels(vis_data$gender)  <-c("1" = "Male", "2" = "Female", "95" = NA, "99" = NA)
-# labelled::val_labels(vis_data$haart)   <-c("0" = "Not on ART", "1" = "on ART")
-# labelled::val_labels(vis_data$outcome) <-c("10"= "Deceased", "20" = "In care", "30" = "Transfered Out", "40" = "LTFU", "95" = "Unknown")
-# labelled::val_labels(vis_data$method_in_art_named) <-c("0" = "New", "1" = "Transfer In", "88" = NA )
-
-
-## Remove unused/intermediate objects from memory
-
-rm(list = c("dem_raw","lab_raw","pat_raw","tb_raw","transfers_raw","vis_raw","vis_tb_raw"))
-
-```
-
-
 
 ```{r include=FALSE}
 
 #############################################################################
-##############      III. Analyzing data/presenting    #######################
+################      I-II. IMPORTING/CLEANING DATA   #######################
 #############################################################################
 
+## Note : If your vis table/sheet has more than 600,000 rows,
+## You can remove visits that are more than 5 years old to avoid std::bad_alloc error
 
-#Get visits for patients that date of visit = date of art start date
+source(here("R", "TierDataCleaning.R"),local = knitr::knit_global())
 
+```
+- No of visits `r length(vis$patient) `
+```{r include=FALSE}
+#############################################################################
+##############      III. Analyzing data/presenting    #######################
+#############################################################################
+###
 
 #Q/ Do we need a time window for initiations or do we keep strict art_start_date==visit_date
 
 
 ###################### CD4 LAB DATA ##############################
 ##################################################################
-#A/ Given that in Tier.net we encode results dates for lab tests, we should have a time window check
+#A/ Given that in Tier.net we encode results dates and not sample collection dates for lab tests, 
+# we should have a time window check
 #TODO : Need to remove duplicates for CD4 data encoded twice for the same visit
 
 
@@ -339,12 +97,6 @@ vis_cd4<-vis_cd4 %>%
 #Unique visits
 #vis_cd4_data_dup<-vis_cd4[duplicated(vis_cd4[,1:16]),]
 vis_cd4_data<-vis_cd4[!duplicated(vis_cd4[,1:16]),]
-
-#Some duplicate visit data include
-#Visits with different lab dates based on time window, need to decide which one to pick (soonest maybe?)
-# 
-# vis_cd4_data[!duplicated(vis_cd4_data[,1:16]),] %>%
-#   arrange(patient)
 
 ###################### CRAG LAB DATA ##############################
 ##################################################################
@@ -407,14 +159,15 @@ vis_cd4_crag_tbm_data<-vis_cd4_crag_tbm[!duplicated(vis_cd4_crag_tbm[,1:21]),]
 lab_data_vl <-lab %>%
   filter((lab_id =="RNA") & !is.na(lab_v))
 
-#Get last VL up to 15 months(390 days) before current visit
-#Assumption: Patient under care should have VL atleast once a year
+#Get last VL up to 12 months(360 days) before current visit
+#Assumption: Validity for a VL is 12 months (1 year)
+
 vis_cd4_crag_tbm_lvl<-sqldf(
   "select data.*,vl.lab_dmy,vl.lab_v
     from vis_cd4_crag_tbm_data data
     left join lab_data_vl vl
       on data.patient = vl.patient
-        and vl.lab_dmy between (data.visit_dmy -390) and (data.visit_dmy -1)"
+        and vl.lab_dmy between (data.visit_dmy -360) and (data.visit_dmy -1)"
 )%>%
   rename(
     lastvl_date = lab_dmy,
@@ -508,33 +261,16 @@ vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans_data<- vis_cd4_crag_tbm_lvl_l3cd4_lst
 
 ## Remove unused/intermediate objects from memory
 
-# rm(list = c("vis_cd4_crag_tbm_lvl_l3cd4","vis_cd4_crag_tbm_lvl_l3cd4_data",
-#             "vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_data","vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans"))
+rm(list = c("vis","vis_cd4_crag_tbm_lvl_l3cd4","vis_cd4_crag_tbm_lvl_l3cd4_data",
+             "vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_data","vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans"))
 
 
-```
-
-##ELIGIBILITY CRITERIA
-Note: It is important to note that some of the below eligibility criteria are not mutually exclusive, meaning a patient can belong to more than one eligibility criteria. As example, a patient can be returnee and has a high last VL. Important to clarify the order.  
--- Patients are considered and not visits events, meaning only first occurence of patient in the reporting period is considered
-In the meantime, the following are assumptions for the eligibility:
-New initiations : Patients who are starting ART 
-  Exclusion : Transfers In
-Returnees : Patients who are returning to care after being LTFUP (exact duration depends on settings/projects/countries)
-High VL: Patients who visit the facility after having a high VL  
-  Exclusion : Returnees
-
-```{r INCLUDE=FALSE, fig.width=7.0}
-
-######################################################################
-####################### ELIBILITY CRITERIA ###########################
-######################################################################
 
 
-start_period <-as.Date("2021/01/01")
-end_period   <-as.Date("2021/12/31")
-pat_col_ind  <- 4 #Patient column index in the data frame
-days_ltfup   <-90 #Days for ltfu. This can be context specific
+################################################################################
+############################ ELIBILITY CRITERIA ################################
+################################################################################
+
 
 #Summary data for AHD cascade
 summ_data_ahd <-data.frame(matrix(nrow = 0,ncol=14))
@@ -549,104 +285,19 @@ vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans_data <- vis_cd4_crag_tbm_lvl_l3cd4_ls
     vis_month_year   = format(as.Date(visit_dmy), "%Y-%m"),
   )
 
+## Get total number of unique patients who visited in the period
+vis_period_temp <- vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans_data %>%
+  filter(visit_dmy>=start_period & visit_dmy<=end_period)
 
-# vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans_data<-vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans_data%>%
-#   mutate(
-#     #Add category for the eligibility criteria
-#     elig_cat = case_when(
-#        visit_dmy == haart_dmy & method_into_art == 0 ~ "Initiations",
-#        
-#     )
-#   )
-
-
-############################  PATIENTS WITH NO CD4   ###########################
-################################################################################
-#Q/ What time window between enrolment in cohort vs check for CD4?
-#Joining patient table and lab table(CD4), then filter only patients with no CD4
-
-# Assumption/ Eligibility : Patients enrolled  for >=12M at start of reporting period 
-# and never had a CD4 by start of reporting period
-# Def : Enrollment date == transfer in if method in art == 1/ art start date if 
-# method in art == 0
-
-#Get list of visits within reporting period for patients enrolled for >=12M 
-#at the beginning of reporting period
-
-#Get patients who have NEVER done a CD4 prior start of reporting
-lab_data_cd4_temp <- lab_data_cd4 %>%
-  filter(lab_dmy <start_period)
-
-no_cd4_patient  <- patient_full %>%
-  left_join(lab_data_cd4_temp,by = "patient") %>%
-  #Get patients who do not have a CD4
-  filter(is.na(lab_v))
-
-no_cd4_pat_code <- unique(no_cd4_patient$patient)
-
+tot_patient_period <- length(unique (vis_period_temp$patient))
 #Remove object from memory
-rm("lab_data_cd4_temp")
-
-vis_gt_12m <- vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans_data %>%
- 
-  filter(
-    #1. Filter only patients who have never done CD4 prior start of reporting period
-      patient %in% no_cd4_pat_code
-    #2. Filter visits for current reporting period
-    &(visit_dmy>=start_period & visit_dmy<=end_period)
-    
-    #3. Filter patients enrolled for >=12M 
-    & ((interval(enrol_date,start_period) %/% days(1) / (365/12)) >12 )
-  ) %>%
-  
-  # Arrange to place first visit for patient with CD4 on top
-  # Useful when filtering unique patients
-  arrange(desc(patient),desc(cd4_date))
-
-#Get unique patients
-
-no_cd4_data_dup <- vis_gt_12m[duplicated(vis_gt_12m[,6:20]),]
-
-#Patients with no CD4 ever eligibible for CD4 in current reporting period
-no_cd4_data <- vis_gt_12m[!duplicated(vis_gt_12m[,6:20]),]
-
-#Get unique patient codes with no CD4 to be used to avoid duplicate patients
-no_cd4_pat_code <- unique(no_cd4_data$patient)
-
-#Bind rows to summary data
-summ_data_ahd <- summ_data_ahd %>%
-  rbind(
-    no_cd4_data %>%
-       mutate(
-        vis_year = year(visit_dmy)
-      )%>%
-      mutate(
-        category    = "patient with no cd4",
-      )%>%
-      group_by(category) %>%
-      summarise(
-        eligible    = n(),
-        cd4_done    = sum(!is.na(cd4_value),na.rm = TRUE),
-        `%cd4_done` = round((cd4_done/eligible),4)*100, 
-        cd4_lt200   = sum(cd4_value<200,na.rm = TRUE),
-        `%cd4_lt200`= round((cd4_lt200/cd4_done),4)*100,
-        lam_done    = sum(cd4_value<200 & !is.na(tbm_value),na.rm = TRUE),
-        `%lam_done` = round((lam_done/cd4_lt200),4)*100,
-        crag_done   = sum(cd4_value<200 & !is.na(crag_value),na.rm = TRUE),
-        `%crag_done`= round((crag_done/cd4_lt200),4)*100,
-        lam_pos     = sum(cd4_value<200 & !is.na(tbm_value) & (tbm_value=="+"),na.rm = TRUE),
-        `%lam_pos`  = round((lam_pos/lam_done),4)*100,
-        crag_pos    = sum(cd4_value<200 & !is.na(crag_value) & (crag_value=="+"),na.rm = TRUE),
-        `%crag_pos` = round((crag_pos/crag_done),4)*100
-        
-      )
-  )
-
+rm(list = c("vis_period_temp"))
 
 ###########################  NEW INITIATIONS   #################################
 ################################################################################
 
-
+#-Def: Patients initiated in the reporting period(period of observation)
+#-Exclusion: Patients who were transferred in
 
 #Filter visits that happen on ART Start Date (new art initiations) and new patients (not transfers in)
 
@@ -655,15 +306,15 @@ new_init <-vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans_data %>%
     (visit_dmy>=start_period & visit_dmy<=end_period)
     #New initiations filtering
     & (visit_dmy == haart_dmy & method_into_art == 0)
-    # Excludes patients already list of no CD4 patients to avoid double counting
-    & !(patient %in% no_cd4_pat_code)
   )
+
+#Get unique patients data
 new_init_data <- new_init[!duplicated(new_init[,6:20]),]
 
-#Get unique patient codes with no CD4 to be used to avoid duplicate patients
+#Get patient codes for new initiations
 new_init_pat_code <- unique(new_init_data$patient)
 
-#Bind rows to summary data
+#Bind new initiation data rows to summary data
 summ_data_ahd <- summ_data_ahd %>%
   rbind(
     new_init_data %>%
@@ -692,60 +343,35 @@ summ_data_ahd <- summ_data_ahd %>%
       )
   )
 
-# art_casc <-vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans_data %>%
-#   filter(visit_dmy>=start_period & visit_dmy<=end_period)%>%
-#    mutate(
-#     quarter_year = quarter(visit_dmy, with_year = T),
-#     month_year   = format(as.Date(visit_dmy), "%Y-%m"),
-#   )%>%
-#   
-#   group_by(quarter_year,facility)%>%
-#   summarise(
-#     tot_vis       = n(),
-#     tot_cd4       = sum(!is.na(cd4_value),na.rm = TRUE),
-#     tot_in        = sum(visit_dmy == haart_dmy & method_into_art == 0,na.rm = TRUE),
-#     cd4_in        = sum(visit_dmy == haart_dmy & method_into_art == 0 & !is.na(cd4_value),na.rm = TRUE),
-#     `% cd4_in`    = round((cd4_in/tot_in),4)*100,
-#     tot_cd4_lt200 = sum(cd4_value<200,na.rm = TRUE), #Tot CD4 < 200
-#     cd4_lt200_in  = sum(visit_dmy == haart_dmy & method_into_art == 0 & !is.na(cd4_value) & cd4_value<200,na.rm = TRUE), #Tot CD4 < 200
-#     cd4_lt200_oth = sum(!(visit_dmy == haart_dmy & method_into_art == 0) & !is.na(cd4_value) & cd4_value<200,na.rm = TRUE),
-#     tot_lam       = sum(cd4_value<200 & !is.na(tbm_value),na.rm = TRUE),
-#     `%tot_lam`    = round((tot_lam/tot_cd4_lt200),4)*100,
-#     lam_in        = sum(visit_dmy == haart_dmy & method_into_art == 0 & !is.na(cd4_value) & cd4_value<200 & !is.na(tbm_value),na.rm = TRUE),
-#     `%lam_in`     = round((lam_in/cd4_lt200_in),4)*100,
-#     tot_crag      = sum(cd4_value<200 & !is.na(crag_value),na.rm = TRUE),
-#     `%tot_crag`   = round((tot_crag/tot_cd4_lt200),4)*100,
-#     crag_in       = sum(visit_dmy == haart_dmy & method_into_art == 0 & !is.na(cd4_value) & cd4_value<200 & !is.na(crag_value),na.rm = TRUE),
-#     `%crag_in`    = round((crag_in/cd4_lt200_in),4)*100,
-#     lam_pos       = sum(cd4_value<200 & !is.na(tbm_value) & (tbm_value=="+"),na.rm = TRUE),
-#     `%lam_pos`    = round((lam_pos/tot_lam),4)*100,
-#     crag_pos      = sum(cd4_value<200 & !is.na(crag_value) & (crag_value=="+"),na.rm = TRUE),
-#     `%crag_pos`   = round((crag_pos/tot_crag),4)*100,
-#   )# %>%
-#   #adorn_totals()
 
 
 ###################################  RETURNEES   ###############################
 ################################################################################
+
+#-Def : Patients who are returning to care after being LTFU (interrupters). Period of interruption is context specific, here considered 90 days
+#-Exclusion :
+
 #Outcome : 10, Death(HIV Related), 11: Death (HIV relationship unknown), 
 #20: Alive and in care, 30,31: Transfers out
 #40,41: LTFUP, 95: Not ascertained
-#Def: These are people who have been LTFUP and are coming back to care
+
 
 
 returnees<- vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans_data %>%
   filter(
     (visit_dmy>=start_period & visit_dmy<=end_period)
+    &(
+      #Excludes transfers in and transfers out on the date of visit
+      !((visit_dmy == transfer_in_dmy & !is.na(transfer_in_dmy)) #Transfers in
+      | ((visit_dmy == outcome_dmy) & ((outcome =="30") |(outcome =="31")))) #30,31 transfers out
+    )
     # Filter patients who returned > days for ltfup
     & miss_app_days >days_ltfup 
-    # Exclude patients already list of no CD4 patients to avoid double counting
-    & !(patient %in% no_cd4_pat_code)
     )
   
-#Filter to get unique patients in reporting period
 #Get first occurrence of patient in reporting period
 
-#Q/Consider most recent visit or first occurence? IMO, most recent as it reflects more recent 
+#Q/Consider most recent visit or first occurrence? IMO, most recent as it reflects more recent 
 # status of patient
 returnees <-returnees%>%
   arrange(patient,desc(visit_dmy))
@@ -753,7 +379,7 @@ returnees <-returnees%>%
 returnees_dup <-returnees[duplicated(returnees[,pat_col_ind]),]
 returnees_data<-returnees[!duplicated(returnees[,pat_col_ind]),]
 
-#Get unique patient codes with no CD4 to be used to avoid duplicate patients
+#Get unique patient codes for returnees
 returnees_pat_code <- unique(returnees_data$patient)
 
 #Bind rows to summary data
@@ -789,20 +415,23 @@ summ_data_ahd <- summ_data_ahd %>%
 #############################  HIGH VIRAL LOAD   ###############################
 ################################################################################
 
-#Visits with last High VL
+#-Def : Patients with visiting after a High VL
 
-#Q/ Consider people with valid CD4 as still part of the cascade for tblam and crag
+#Q/ Should we consider people with valid CD4 as still part of the cascade for tblam and crag?
 
-#Q/Consider most recent visit or first occurence? IMO, most recent as it reflects more recent 
+#Q/Should we Consider most recent visit or first occurence? IMO, most recent as it reflects more recent 
+
 # status of patient
 high_vl <-vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans_data %>%
   filter(
     (
-      visit_dmy>=start_period & visit_dmy<=end_period) 
-      # Filter high VL
+      visit_dmy>=start_period & visit_dmy<=end_period)
+    
+      ## Exclude patients who are returnees
+      & !(patient %in% returnees_pat_code)
+    
+      ## Filter high VL
       & lastvl_value >1000
-      # Exclude patients already list of no CD4 patients
-      & !(patient %in% no_cd4_pat_code)
     ) %>%
   
   arrange(patient,desc(visit_dmy))
@@ -811,7 +440,7 @@ high_vl <-vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans_data %>%
 high_vl_dup<-high_vl[duplicated(high_vl[,pat_col_ind]),]
 high_vl_data<-high_vl[!duplicated(high_vl[,pat_col_ind]),]
 
-#Get unique patient codes with no CD4 to be used to avoid duplicate patients
+#Get unique patient codes for High VL
 high_vl_pat_code <- unique(high_vl_data$patient)
 
 #Bind rows to summary data
@@ -830,6 +459,95 @@ summ_data_ahd <- summ_data_ahd %>%
         cd4_done    = sum(!is.na(cd4_value),na.rm = TRUE),
         `%cd4_done` = round((cd4_done/eligible),4)*100, 
          cd4_lt200  = sum(cd4_value<200,na.rm = TRUE),
+        `%cd4_lt200`= round((cd4_lt200/cd4_done),4)*100,
+        lam_done    = sum(cd4_value<200 & !is.na(tbm_value),na.rm = TRUE),
+        `%lam_done` = round((lam_done/cd4_lt200),4)*100,
+        crag_done   = sum(cd4_value<200 & !is.na(crag_value),na.rm = TRUE),
+        `%crag_done`= round((crag_done/cd4_lt200),4)*100,
+        lam_pos     = sum(cd4_value<200 & !is.na(tbm_value) & (tbm_value=="+"),na.rm = TRUE),
+        `%lam_pos`  = round((lam_pos/lam_done),4)*100,
+        crag_pos    = sum(cd4_value<200 & !is.na(crag_value) & (crag_value=="+"),na.rm = TRUE),
+        `%crag_pos` = round((crag_pos/crag_done),4)*100
+        
+      )
+  )
+
+############################  PATIENTS WITH NO CD4   ###########################
+################################################################################
+#Q/ What time window between enrolment in cohort vs check for CD4?
+#Joining patient table and lab table(CD4), then filter only patients with no CD4
+
+#-Def : Patients enrolled  for >=12M at start of reporting period 
+# and never had a CD4 by start of reporting period
+# Assumption : Enrollment date == transfer in if method in art == 1/ art start date if method in art == 0
+
+#Get list of visits within reporting period for patients enrolled for >=12M 
+#at the beginning of reporting period
+
+#Get patients who have NEVER done a CD4 prior start of reporting
+lab_data_cd4_temp <- lab_data_cd4 %>%
+  filter(lab_dmy <start_period)
+
+no_cd4_patient  <- patient_data %>%
+  left_join(lab_data_cd4_temp,by = "patient") %>%
+  
+  #Get patients who do not have a CD4
+  filter(is.na(lab_v))
+
+no_cd4_pat_code <- unique(no_cd4_patient$patient)
+
+#Remove object from memory
+rm("lab_data_cd4_temp")
+
+vis_gt_12m <- vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans_data %>%
+  
+  filter(
+      
+    #0. Filter only patients who have never done CD4 prior start of reporting period
+    patient %in% no_cd4_pat_code
+      
+    #1. Exclude patients already counted in previous groups
+    & !(patient %in% new_init_pat_code)
+    & !(patient %in% returnees_pat_code)
+    & !(patient %in% high_vl_pat_code)
+    
+    #2. Filter visits for current reporting period
+    &(visit_dmy>=start_period & visit_dmy<=end_period)
+    
+    #3. Filter patients enrolled for >=12M 
+    & ((interval(enrol_date,start_period) %/% days(1) / (365/12)) >12 )
+  ) %>%
+  
+  # Arrange to place first visit for patient with CD4 on top
+  # Useful when filtering unique patients
+  arrange(desc(patient),desc(cd4_date))
+
+#Get unique patients
+
+no_cd4_data_dup <- vis_gt_12m[duplicated(vis_gt_12m[,6:20]),]
+
+#Patients with no CD4 ever eligibible for CD4 in current reporting period
+no_cd4_data <- vis_gt_12m[!duplicated(vis_gt_12m[,6:20]),]
+
+#Get unique patient codes with no CD4 
+no_cd4_pat_code <- unique(no_cd4_data$patient)
+
+#Bind rows to summary data
+summ_data_ahd <- summ_data_ahd %>%
+  rbind(
+    no_cd4_data %>%
+       mutate(
+        vis_year = year(visit_dmy)
+      )%>%
+      mutate(
+        category    = "patient with no cd4",
+      )%>%
+      group_by(category) %>%
+      summarise(
+        eligible    = n(),
+        cd4_done    = sum(!is.na(cd4_value),na.rm = TRUE),
+        `%cd4_done` = round((cd4_done/eligible),4)*100, 
+        cd4_lt200   = sum(cd4_value<200,na.rm = TRUE),
         `%cd4_lt200`= round((cd4_lt200/cd4_done),4)*100,
         lam_done    = sum(cd4_value<200 & !is.na(tbm_value),na.rm = TRUE),
         `%lam_done` = round((lam_done/cd4_lt200),4)*100,
@@ -866,7 +584,7 @@ other_cd4 <- vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans_data %>%
 other_cd4_dup <-other_cd4[duplicated(other_cd4[,pat_col_ind]),]
 other_cd4_data<-other_cd4[!duplicated(other_cd4[,pat_col_ind]),]
 
-#Get unique patient codes with no CD4 to be used to avoid duplicate patients
+#Get unique patient codes with no CD4 
 other_cd4_pat_code <- unique(other_cd4_data$patient)
 
 #Bind rows to summary data
@@ -899,29 +617,8 @@ summ_data_ahd <- summ_data_ahd %>%
   )
 
 
-# high_vl_casc<-high_vl_data%>%
-#   #Exclude initiations that might be part of the data (cross checking for data quality)
-#   filter( 
-#     !(visit_dmy == haart_dmy & method_into_art == 0)
-#   )%>%
-#   #Exclude patients who do not currently have a CD4 but have valid CD4 (<=3M)
-#   filter(
-#     !(is.na(cd4_value) & !is.na(last3cd4_value))
-#   )%>%
-#   mutate(
-#     quarter_year = quarter(visit_dmy, with_year = T),
-#     month_year   = format(as.Date(visit_dmy), "%Y-%m"),
-#   )%>%
-#   group_by(quarter_year)%>%
-#   summarise(
-#     tot_hvl        = n(),
-#     cd4_hvl        = sum(!is.na(cd4_value)),
-#     `% cd4_hvl`    = round((cd4_hvl/tot_hvl),4)*100,
-#   )
-
-
 ###### TOTAL OF AHD CASCADE ######
-str(summ_data_ahd)
+#str(summ_data_ahd)
 summ_data_ahd <- summ_data_ahd %>%
   adorn_totals(where = "row")
 
@@ -940,71 +637,107 @@ total_row <- tail(summ_data_ahd,1) %>%
 
 summ_data_ahd[nrow(summ_data_ahd),] <-total_row
 
-```
+############ GENERATING GRAPHS AND TABLES FOR PRESENTATION  ##############
+##########################################################################
 
 
-```{e INCLUDE=FALSE}
-
-########################### RETURNEES   ##############################
-######################################################################
-#Outcome : 10, Death(HIV Related), 11: Death (HIV relationship unknown), 20: Alive and in care, 30,31: Transfers out
-#40,41: LTFUP, 95: Not ascertained
-
-#Function to return last next appointment date for a patient
-#based on patient id and current visit
-last_next_app_fnc <- function(patient_id, curr_vis_date){
-  
-  vis_dmy  <- as.Date(curr_vis_date)
-  vis_dmy_2<- seq(vis_dmy, length=2, by="-2 years")[2] #Two years from current visit
-
-  
-  result <- vis_cd4_crag_tbm_data %>%#Visit for the last 5 years
-    filter(
-      (patient == patient_id) &
-      (visit_dmy < curr_vis_date &  visit_dmy >=vis_dmy_2) #Filter visits before current visit date up to 2 years ago
-    ) %>%
-    arrange(desc(visit_dmy)) %>% #Sort by date of visit
-    select(next_visit_dmy) %>% 
-    head(1) #Only get the first top visit
-
-  result <- ifelse(nrow(result)==0,NA,result)
-  value <- result[[1]]
-  return (value)
-}
-
-
-eligible_vis <- vis_cd4_crag_tbm_data %>%
-  filter(
-    visit_dmy >=as.Date("2021/01/01") & visit_dmy <=as.Date("2021/12/31")
-  )%>%
-  left_join(transfers,
-            c("patient" = "patient", "visit_dmy" = "transfer_dmy")) %>%
-  filter(#Excludes all transfers (in and out)
-    is.na (facility_from)) %>% 
-  mutate(#Get last next appointment date
-    last_next_app_date =  (map2(patient, visit_dmy, last_next_app_fnc)))
-    
-
-# eligible_vis_data <- sqldf(
-#   "select el.* from eligible_vis el
-#     left join (select max(vis.visit_dmy) as last_app_date
-#                   from vis_cd4_crag_tbm_data vis
-#                     where vis.patient = el.patient and vis.visit_dmy <el.visit_dmy)  
-#   "
-# )
+# no_cd4_data %>%
+#   group_by(facility) %>%
+#   summarise(total = n())
 # 
-# mysql <-sqldf(
-#   "select max(vis.visit_dmy) as last_app_date
-#                   from vis_cd4_crag_tbm_data vis
-#                     where vis.patient = '11ec5d34-78ed-41c9-b156-49d2140fda47' and vis.visit_dmy < '04/03/2020'
-#   "
-# ) 
+# no_cd4_data %>%
+#   ggplot(
+#     aes(x = enrol_year,
+#     )
+#   ) +
+#   geom_histogram(bins = 8) +
+#   facet_wrap(~ facility)
 
-vis_dmy  <- as.Date("2022/01/01")
-  vis_dmy_2<- seq(vis_dmy, length=2, by="-14 month")[2] 
-  vis_dmy_2
+
+DiagrammeR::grViz(
+  "digraph ahdcascade{
   
+    graph[layout = dot]
+    
+    # define the global styles of the nodes. We can override these in box if we wish
+    node [shape = rectangle, width=4, style = filled, fillcolor = white,fontsize = 16]
+    
+    vis      [label = '@@1']
+    newinit  [label = '@@2' fillcolor = MistyRose]
+    highvl   [label = '@@3' fillcolor = AntiqueWhite]
+    returnee [label = '@@4' fillcolor = LemonChiffon]
+    nocd4    [label = '@@5' fillcolor = Beige]
+    others   [label = '@@6' fillcolor = MintCream]
+    
+    newinitcd4 [label = '@@7' fillcolor = MistyRose]
+    highvlcd4  [label = '@@8' fillcolor = AntiqueWhite]
+    returneecd4[label = '@@9' fillcolor = LemonChiffon]
+    nocd4cd4   [label = '@@10' fillcolor = Beige]
+    otherscd4  [label = '@@11' fillcolor = MintCream]
+    
+    totcd4  [label = '@@12'  fillcolor = PaleGreen]
+    
+    totcd4lt200 [label = '@@13' fillcolor = Coral]
+    
+    lam [label = '@@14']
+    crag[label = '@@15']
+    
+    lampos [label = '@@16']
+    cragpos[label = '@@17']
+    
+    vis -> {newinit, highvl,returnee,nocd4,others}
+    
+    newinit  -> newinitcd4
+    highvl   -> highvlcd4
+    returnee -> returneecd4
+    nocd4    -> nocd4cd4
+    others   -> otherscd4
+    
+  {newinitcd4,highvlcd4,returneecd4,nocd4cd4,otherscd4} -> totcd4
   
+  totcd4 -> totcd4lt200
+  
+  totcd4lt200 ->{lam,crag}
+  lam  ->lampos
+  crag ->cragpos
+  
+  }
+  
+  [1]: paste0('Patients \\n',tot_patient_period) 
+  [2]: paste0('New ART initiations','\\n',summ_data_ahd[[1,2]])
+  [3]: paste0('High VL','\\n',summ_data_ahd[[2,2]])
+  [4]: paste0('Returnees','\\n',summ_data_ahd[[3,2]])
+  [5]: paste0('No CD4','\\n',summ_data_ahd[[4,2]])
+  [6]: paste0('Others (clinical signs...)','\\n ')
+  [7]: paste0(' % CD4 done (',summ_data_ahd[[1,4]],') \\n',summ_data_ahd[[1,3]],'/',summ_data_ahd[[1,2]])
+  [8]: paste0(' % CD4 done (',summ_data_ahd[[2,4]],') \\n',summ_data_ahd[[2,3]],'/',summ_data_ahd[[2,2]])
+  [9]: paste0(' % CD4 done (',summ_data_ahd[[3,4]],') \\n',summ_data_ahd[[3,3]],'/',summ_data_ahd[[3,2]])
+  [10]: paste0(' % CD4 done (',summ_data_ahd[[4,4]],') \\n',summ_data_ahd[[4,3]],'/',summ_data_ahd[[4,2]])
+  [11]: paste0(' # CD4 done (','NA',') \\n',summ_data_ahd[[5,3]])
+  [12]: paste0(' #Total CD4 done(Patient)','\\n',summ_data_ahd[[6,3]])
+  [13]: paste0(' % CD4<200 (',summ_data_ahd[[6,6]],') \\n',summ_data_ahd[[6,5]],'/',summ_data_ahd[[6,3]])
+  [14]: paste0(' %Tblam done (',summ_data_ahd[[6,8]],') \\n',summ_data_ahd[[6,7]],'/',summ_data_ahd[[6,5]])
+  [15]: paste0(' %Crag done (',summ_data_ahd[[6,10]],') \\n',summ_data_ahd[[6,9]],'/',summ_data_ahd[[6,5]])
+  [16]: paste0(' %Tblam +(',summ_data_ahd[[6,12]],') \\n',summ_data_ahd[[6,11]],'/',summ_data_ahd[[6,7]])
+  [17]: paste0(' %Crag +(',summ_data_ahd[[6,14]],') \\n',summ_data_ahd[[6,13]],'/',summ_data_ahd[[6,9]])"
+  ) %>%
+  
+  ## Export the cascade into an image in the output folder
+  export_svg %>% charToRaw %>% rsvg::rsvg_png(here("output/ahd_cascade.png"))
+
+
+tapply(new_init_data$patient, new_init_data$facility, function(x) length(x))
+
+## Create a new workbook
+wb <- createWorkbook("TierAnalysisAHD")
+
+## Add a worksheets
+openxlsx::addWorksheet(wb, "NewInitiation", gridLines = TRUE)
+## write dataframes to worksheets
+openxlsx::writeData(wb, sheet = 1, new_init_data,borderStyle = "thin",withFilter = TRUE)
+
+file_name<-paste(here("output/TierAHD_"),Sys.Date(),".xlsx",sep = "")
+
+openxlsx::saveWorkbook(wb, file_name, overwrite = TRUE)
 
 ```
-
