@@ -1,7 +1,7 @@
 ---
 title: "Tiernet"
 author: "Gauthier A."
-date: "06/09/2022"
+date: "06/10/2022"
 output: html_document
 ---
 
@@ -23,8 +23,8 @@ data_folder <- "data"
 image_folder <- "images"
 output_folder <- "output"
 
-start_period <-as.Date("2022/04/01")
-end_period   <-as.Date("2022/06/30")
+start_period <-as.Date("2022/08/01")
+end_period   <-as.Date("2022/09/30")
 
 pat_col_ind  <- 4 #Patient column index in the data frame
 days_ltfup   <-90 #Days for ltfu. This can be context specific
@@ -69,6 +69,9 @@ lab_data_cd4 <-lab %>%
       breakers = c(0,200,1000)
     )
   )
+
+# lab_cd4<-lab_data_cd4 %>%
+#   filter(lab_dmy>as.Date("2022/08/01"))
 
 
 #vis_cd4 <- left_join(vis_data,lab_data_cd4,c("patient"="patient","visit_dmy"="lab_dmy"))
@@ -285,9 +288,13 @@ vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans_data <- vis_cd4_crag_tbm_lvl_l3cd4_ls
     vis_month_year   = format(as.Date(visit_dmy), "%Y-%m"),
   )
 
+
 ## Get total number of unique patients who visited in the period
 vis_period_temp <- vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans_data %>%
-  filter(visit_dmy>=start_period & visit_dmy<=end_period)
+  filter(visit_dmy>=start_period & visit_dmy<=end_period )
+#tapply(vis_period_temp$patient, vis_period_temp$facility, function(x) length(x))
+
+#vis_period_temp_u <- unique(vis_period_temp$patient)
 
 tot_patient_period <- length(unique (vis_period_temp$patient))
 #Remove object from memory
@@ -304,8 +311,11 @@ rm(list = c("vis_period_temp"))
 new_init <-vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans_data %>%
   filter( 
     (visit_dmy>=start_period & visit_dmy<=end_period)
-    #New initiations filtering
-    & (visit_dmy == haart_dmy & method_into_art == 0)
+    ## New initiations filtering
+    & (visit_dmy == haart_dmy & method_into_art == 0) 
+    
+    ## Excludes patients with a valid CD4 (within 3 months)
+    &  !(!is.na(last3cd4_value) & is.na(cd4_value))
   )
 
 #Get unique patients data
@@ -431,7 +441,10 @@ high_vl <-vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans_data %>%
       & !(patient %in% returnees_pat_code)
     
       ## Filter high VL
-      & lastvl_value >1000
+      & lastvl_value >1000 
+      
+      ## Excludes patients with a valid CD4 (within 3 months)
+      &  !(!is.na(last3cd4_value) & is.na(cd4_value))
     ) %>%
   
   arrange(patient,desc(visit_dmy))
@@ -455,7 +468,7 @@ summ_data_ahd <- summ_data_ahd %>%
       )%>%
       group_by(category) %>%
       summarise(
-        eligible    = n(),
+        eligible    = n() ,
         cd4_done    = sum(!is.na(cd4_value),na.rm = TRUE),
         `%cd4_done` = round((cd4_done/eligible),4)*100, 
          cd4_lt200  = sum(cd4_value<200,na.rm = TRUE),
@@ -731,10 +744,22 @@ tapply(new_init_data$patient, new_init_data$facility, function(x) length(x))
 ## Create a new workbook
 wb <- createWorkbook("TierAnalysisAHD")
 
+## Variables to include in the export
+cols_export <-c("visit_dmy","next_visit_dmy","folder_number","facility","birth_dmy","haart_dmy","cd4_date","cd4_value","cd4_category","crag_date","crag_value","tbm_date","tbm_value","lastvl_date","lastvl_value","last3cd4_date","last3cd4_value")
+
+
 ## Add a worksheets
 openxlsx::addWorksheet(wb, "NewInitiation", gridLines = TRUE)
+openxlsx::addWorksheet(wb, "CV elevé", gridLines = TRUE)
+openxlsx::addWorksheet(wb, "Interrupteurs", gridLines = TRUE)
+openxlsx::addWorksheet(wb, "Sans CD4", gridLines = TRUE)
+openxlsx::addWorksheet(wb, "Sommaire", gridLines = TRUE)
 ## write dataframes to worksheets
-openxlsx::writeData(wb, sheet = 1, new_init_data,borderStyle = "thin",withFilter = TRUE)
+openxlsx::writeData(wb, sheet = 1, new_init_data %>% select(cols_export),borderStyle = "thin",withFilter = TRUE)
+openxlsx::writeData(wb, sheet = 2, high_vl_data %>% select(cols_export),borderStyle = "thin",withFilter = TRUE)
+openxlsx::writeData(wb, sheet = 3, returnees_data %>% select(cols_export),borderStyle = "thin",withFilter = TRUE)
+openxlsx::writeData(wb, sheet = 4, no_cd4_data %>% select(cols_export),borderStyle = "thin",withFilter = TRUE)
+openxlsx::writeData(wb, sheet = 5, summ_data_ahd,borderStyle = "thin",withFilter = TRUE)
 
 file_name<-paste(here("output/TierAHD_"),Sys.Date(),".xlsx",sep = "")
 
