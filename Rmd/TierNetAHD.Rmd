@@ -286,6 +286,10 @@ vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans_data <- vis_cd4_crag_tbm_lvl_l3cd4_ls
   mutate(
     vis_quarter_year = quarter(visit_dmy, with_year = T),
     vis_month_year   = format(as.Date(visit_dmy), "%Y-%m"),
+  ) %>%
+  filter(
+    ## Exclude children with age <5 at the beginning of the period (365*5 = 1825)
+     (start_period - birth_dmy ) >=1825
   )
 
 
