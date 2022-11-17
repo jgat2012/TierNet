@@ -39,7 +39,7 @@ source(source_path,local = knitr::knit_global())
 data_folder <- "data/"
 image_folder <- "images/"
 output_folder <- "output/"
-excelDBFile <- "TierXmlExcelConakry.xlsx"
+excelDBFile <- "TierXmlExcelKinshasa.xlsx"
 
 ###############################################################################
 #################   I. Importing & Exploring Data         #####################
@@ -94,7 +94,7 @@ vis_preg  <- vis_preg_raw   %>% janitor::clean_names()
 ####### 2. Select,add and/or re order/rename columns #######
 ############################################################
 vis <- vis %>%
-  select(patient, visit_dmy, tb_status, who_stage, next_visit_dmy) %>%
+  select(patient, visit_dmy, tb_status, who_stage, next_visit_dmy,user_defined_visit_var2,user_defined_visit_var3) %>%
   #Convert all columns to character class
   mutate(across(.cols = everything(), .fns = as.character)) %>%
   #Trim all variable contents
@@ -115,6 +115,74 @@ lab <- lab %>%
   mutate(across(.cols = everything(), .fns = as.character)) %>%
   #Trim all variable contents
   mutate(across(where(is.character), str_trim))
+
+
+######### Custom variables for crag and Tblam Tier.net <1.12 START ###########
+
+## Custom variable Crag Serique for Tier.net <1.12
+custom_crag <- vis %>%
+  filter (user_defined_visit_var2!="") %>%
+  inner_join(pat,"patient")%>%
+  select(facility,visit_dmy,patient,user_defined_visit_var2) %>%
+  mutate(
+    lab_dmy=visit_dmy,
+    lab_id ="CRAG",
+    lab_v = NA,
+    lab_t = case_when(
+      startsWith(tolower(user_defined_visit_var2),"pa") ~ "",
+      startsWith(tolower(user_defined_visit_var2),"pc") ~ "",
+      startsWith(tolower(user_defined_visit_var2),"pn") ~ "",
+      startsWith(tolower(user_defined_visit_var2),"nf") ~ "",
+      startsWith(tolower(user_defined_visit_var2),"n") ~ "-",
+      startsWith(tolower(user_defined_visit_var2),"p") ~ "+",
+      TRUE~ ""
+    ),
+    episode_type = NA,
+    episode_id  = NA
+  ) %>%
+  filter(
+    # Only get data with crag values
+    lab_t !=""
+  ) %>%
+  select(patient,lab_dmy,lab_id,lab_t,lab_v,episode_type,episode_id)
+
+## Bind custom crag data to lab data
+lab <- lab%>%
+  rbind(custom_crag)
+
+
+## Custom variables Tblam for Tier.net <1.12
+custom_tblam <- vis %>%
+  filter (user_defined_visit_var3!="") %>%
+  inner_join(pat,"patient")%>%
+  select(facility,visit_dmy,patient,user_defined_visit_var3) %>%
+  mutate(
+    lab_dmy=visit_dmy,
+    lab_id ="LAM",
+    lab_v = NA,
+    lab_t = case_when(
+      startsWith(tolower(user_defined_visit_var3),"pa") ~ "",
+      startsWith(tolower(user_defined_visit_var3),"pc") ~ "",
+      startsWith(tolower(user_defined_visit_var3),"pn") ~ "",
+      startsWith(tolower(user_defined_visit_var3),"nf") ~ "",
+      startsWith(tolower(user_defined_visit_var3),"n") ~ "-",
+      startsWith(tolower(user_defined_visit_var3),"p") ~ "+",
+      TRUE~ ""
+    ),
+    episode_type = NA,
+    episode_id  = NA
+  ) %>%
+  filter(
+    # Only get data with crag values
+    lab_t !=""
+  ) %>%
+  select(patient,lab_dmy,lab_id,lab_t,lab_v,episode_type,episode_id)
+
+## Bind custom tblam data to lab data
+lab <- lab%>%
+  rbind(custom_tblam)
+
+######### Custom variables for crag and Tblam Tier.net <1.12 END ###########
 
 dem <- dem %>%
   select(patient, folder_number) %>%
@@ -202,7 +270,7 @@ vis <- vis %>%
     visit_dmy = as.Date(as.numeric(visit_dmy),origin ="1970-01-01"),
     next_visit_dmy = as.Date(as.numeric(next_visit_dmy),origin ="1970-01-01"),
     vis_year = year(visit_dmy)
-  )
+  ) 
 
 
 

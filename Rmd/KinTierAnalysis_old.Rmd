@@ -1,7 +1,7 @@
 ---
-title: "Tiernet"
+title: "KinTierAnalysis"
 author: "Gauthier A."
-date: "06/05/2022"
+date: '2022-05-27'
 output: html_document
 ---
 
@@ -45,23 +45,24 @@ output_folder <- "output"
 #################   I. Importing & Exploring Data         #####################
 ###################   Version of Tier.net : 1.13.4      #######################
 ###############################################################################
+
 ```
 
-```{r setup, include=FALSE}
+```{r echo=FALSE,warning=FALSE}
 
-con<-RODBC::odbcDriverConnect("Driver={Microsoft Access Driver (*.mdb)};DBQ=C:/Users/Gauthier Abdala/Documents/RWD/TierNet/data/TierDESBanguiEloge_20220422.mdb")
+con<-RODBC::odbcDriverConnect("Driver={Microsoft Access Driver (*.mdb)};DBQ=C:/Users/Gauthier Abdala/Documents/RWD/TierNet/data/TierDESKinshasa042022.mdb")
 
 vis_raw <- RODBC::sqlFetch(con,"VIS") #Follow Up clinic Visit table
 pat_raw <- RODBC::sqlFetch(con,"PAT") #Socio demographic char. & outcome table
 lab_raw <- RODBC::sqlFetch(con,"LAB") #Laboratory data table
 dem_raw <- RODBC::sqlFetch(con,"DEM") #Demographic information
 
-#pregnancy_raw <- RODBC::sqlFetch(con,"PREGNANCY")  #Pregnancy information
+pregnancy_raw <- RODBC::sqlFetch(con,"PREGNANCY")  #Pregnancy information
 tb_raw        <- RODBC::sqlFetch(con,"TB")         #Tuberculosis Information
 vis_tb_raw    <- RODBC::sqlFetch(con,"VIS_TB")     #TB Visit Table
 transfers_raw <- RODBC::sqlFetch(con,"TRANSFERS")  #Transfer In/Out Table
-#vis_preg_raw  <- RODBC::sqlFetch(con,"VIS_PREG")   #Antenatal Care
-#infant_raw    <- RODBC::sqlFetch(con,"INFANT")     #Labour and Delivery
+vis_preg_raw  <- RODBC::sqlFetch(con,"VIS_PREG")   #Antenatal Care
+infant_raw    <- RODBC::sqlFetch(con,"INFANT")     #Labour and Delivery
 
 
 #############################################################################
@@ -77,12 +78,12 @@ pat <- pat_raw %>% janitor::clean_names()
 lab <- lab_raw %>% janitor::clean_names()
 dem <- dem_raw %>% janitor::clean_names()
 
-#pregnancy <- pregnancy_raw  %>% janitor::clean_names()
+pregnancy <- pregnancy_raw  %>% janitor::clean_names()
 tb        <- tb_raw         %>% janitor::clean_names()
 vis_tb    <- vis_tb_raw     %>% janitor::clean_names()
 transfers <- transfers_raw  %>% janitor::clean_names()
-#vis_preg  <- vis_preg_raw   %>% janitor::clean_names()
-#infant    <- infant_raw     %>% janitor::clean_names()
+vis_preg  <- vis_preg_raw   %>% janitor::clean_names()
+infant    <- infant_raw     %>% janitor::clean_names()
 
 
 ####### 2. Select,add and/or re order/rename columns #######
@@ -115,25 +116,25 @@ transfers <- transfers %>%
 ################ 3. Cleaning empty/null values     ##########
 #############################################################
 
-#vis <-trim_data_columns(vis)
+vis <-trim_data_columns(vis)
 vis[is.null(vis)  | vis == "NULL" | vis == ""] <- NA
 
-#pat <-trim_data_columns(pat)
+pat <-trim_data_columns(pat)
 pat[is.null(pat)  | pat == "NULL" | pat == ""] <- NA
 
-#lab <-trim_data_columns(lab)
+lab <-trim_data_columns(lab)
 lab[is.null(lab)  | lab == "NULL" | lab == ""] <- NA
 
-#dem <-trim_data_columns(dem)
+dem <-trim_data_columns(dem)
 dem[is.null(dem)  | dem == "NULL" | dem == ""] <- NA
 
-#tb <-trim_data_columns(tb)
+tb <-trim_data_columns(tb)
 tb[is.null(tb)  | tb == "NULL" | tb == ""] <- NA
 
-#vis_tb <-trim_data_columns(vis_tb)
+vis_tb <-trim_data_columns(vis_tb)
 vis_tb[is.null(vis_tb)  | vis_tb == "NULL" | vis_tb == ""] <- NA
 
-#transfers <-trim_data_columns(transfers)
+transfers <-trim_data_columns(transfers)
 transfers[is.null(transfers)  | transfers == "NULL" | transfers == ""] <- NA
 
 
@@ -245,120 +246,167 @@ transfers<-unique(transfers)
 
 ################# 5. Merge tables                #################
 ##################################################################
-vis_data <- left_join(vis,dem,"patient") %>%
+patient_full<- left_join(pat,dem,"patient")
+
+vis_data  <- left_join(vis,dem,"patient") %>%
+  left_join(pat,"patient")
+
+trans_data<- left_join(transfers,dem,"patient") %>%
   left_join(pat,"patient")
 
 
 ################# 6. Add variables/values labels    ##############
 ##################################################################
-labelled::val_labels(vis_data$gender)  <-c("1" = "Male", "2" = "Female", "95" = NA, "99" = NA)
-labelled::val_labels(vis_data$haart)   <-c("0" = "Not on ART", "1" = "on ART")
-labelled::val_labels(vis_data$outcome) <-c("10"= "Deceased", "20" = "In care", "30" = "Transfered Out", "40" = "LTFU", "95" = "Unknown")
-labelled::val_labels(vis_data$method_in_art_named) <-c("0" = "New", "1" = "Transfer In", "88" = NA )
-
-
+# labelled::val_labels(vis_data$gender)  <-c("1" = "Male", "2" = "Female", "95" = NA, "99" = NA)
+# labelled::val_labels(vis_data$haart)   <-c("0" = "Not on ART", "1" = "on ART")
+# labelled::val_labels(vis_data$outcome) <-c("10"= "Deceased", "20" = "In care", "30" = "Transfered Out", "40" = "LTFU", "95" = "Unknown")
+# labelled::val_labels(vis_data$method_in_art_named) <-c("0" = "New", "1" = "Transfer In", "88" = NA )
 
 ```
 
-```{r include=FALSE,fig.width=10}
+```{r include=FALSE}
 
 #############################################################################
 ##############      III. Analyzing data/presenting    #######################
-
 #############################################################################
 
-############################# ACTIVE COHORT #################################
-#############################################################################
-reportind_period <-as.Date("2021/12/31")
-lftup<-pat %>%
-  filter(outcome =="20")
+############################ CP PATIENT ANALYSIS ############################
 
+#Starting Year in 2016 for the purpose of this analysis#
+cp_start_period <- as.Date("2016/01/01")
+cp_end_period   <- as.Date("2021/12/31")
 
-################# INITIATIONS WITH NO DIAGNOSTIC DATES ######################
-#############################################################################
-no_diag_date <- pat %>%
+#Def: CP patients are patients who are sent to CHK for a short period of time 
+# (generally after 3M) for better treatment
+#These can be patients who were initially treated in CHK but then got transferred out.
+#As they return the come back as 'Converted to CP' and have a suffix /CP
+#Other category is patients transferred in from other MSF supported centers.
+#These patients have CP as the suffix
+
+cp_pat <-patient_full%>%
+  filter(haart_dmy>=cp_start_period & haart_dmy<=cp_end_period )%>%
+  #Get CP patients from CHK (Both Converted CP from CHK and new CP patients)
   filter(
-          method_into_art == 0 & # Only new patients
-           (haart == 1)) %>% #Patients on ART with no Diag Date
-  dplyr::filter(haart_dmy>=as.Date("2021/01/01"))%>%
-  mutate(
-    quarter_year =
-      quarter(haart_dmy, with_year = T),
-    month_year   = format(as.Date(haart_dmy), "%Y-%m"),
-    diagn_date = ifelse(is.na(hivp_dmy),"Sans Date Diag VIH","Avec Date Diag VIH" )
+    (startsWith(folder_number,"CP") | endsWith(folder_number,"/CP")) 
+    & facility =="CH KABINDA"
+  )
+
+cp_vis_data   <- vis_data %>%
+  filter(visit_dmy>=cp_start_period & visit_dmy<=cp_end_period )%>%
+  #Get CP patients visits from CHK (Both Converted CP from CHK and new CP patients)
+  filter(
+    (startsWith(folder_number,"CP") | endsWith(folder_number,"/CP")) 
+    & facility =="CH KABINDA"
+  )
+cp_trans_data <- trans_data %>%
+  filter(transfer_dmy>=cp_start_period & transfer_dmy<=cp_end_period )%>%
+  #Get CP patients from CHK (Both Converted CP from CHK and new CP patients)
+  filter(
+    (startsWith(folder_number,"CP") | endsWith(folder_number,"/CP")) 
+    & facility =="CH KABINDA"
   ) %>%
-  group_by(facility, month_year,diagn_date) %>%
+  mutate(
+    quarter_year = quarter(transfer_dmy, with_year = T),
+    trans_cat = case_when(
+      mapply(identical,facility,facility_from)  ~ "transfer out",
+      mapply(identical,facility,facility_to)  ~ "transfer in",
+      TRUE ~ ""
+    )
+  )
+
+#Proportion of Transfers In vs New Patients in CP patients
+
+#Q/ How do we define new vs transfer in patients when it comes to CP patients?
+
+prop_cp_patient_meth_art <-cp_pat %>%
+  
+  mutate(
+    quarter_year = quarter(haart_dmy, with_year = T),
+  )%>%
+  group_by(quarter_year,cohort,method_into_art)%>%
+  arrange(quarter_year)%>%
   summarise(total = n())
 
-no_diag_date %>%
-  
+prop_cp_patient_sum <- cp_pat %>%
+  filter(haart_dmy>=cp_start_period & haart_dmy<=cp_end_period )%>%
+  mutate(
+    quarter_year = quarter(haart_dmy, with_year = T),
+  )%>%
+  group_by(quarter_year,cohort)%>%
+  arrange(quarter_year)%>%
+  summarise(total = n())
+
+prop_cp_patient_meth_art%>%
   ggplot()+
   geom_bar(
-    aes(x=month_year,y = total,fill=diagn_date),
-    position = position_stack(),
-    stat="identity",
+    stat = "identity",
     color = "#661a00",
-    )+
+    position = position_stack(reverse = FALSE),
+    mapping = aes(
+      x = quarter_year,
+      y = total,
+      fill = method_into_art,
+    )
+  )+
   theme(
     #aspect.ratio = 1.3,
     legend.position = "bottom",
     axis.text.x = element_text(angle = 65,hjust = 1.0),
     legend.title = element_blank(),
-  )+
-  facet_grid(~facility)+
+  ) +
+  geom_smooth(
+    aes(x = quarter_year,y = total,colour="Trends CP Enrolments"),
+    method = "lm",
+    formula = y~ poly(x, 2),
+    size   = 1 ,
+    data  = prop_cp_patient_sum) +
+  # geom_smooth(
+  #   aes(x = quarter_year,y = total),
+  #   method = "lm",
+  #   size   = 1 ) +
   labs(
-    title = "Initiations ARV, Janvier 2021 - Mars 2022",
-    x = "Période"
+    title = stringr::str_glue("CP patients enrollments (new+tranfers in) from {year(cp_start_period)} to {year(cp_end_period)} ") ,
+    x     = "Period",
+    y     = "Total",
+  ) +
+  scale_fill_manual(
+    values=c("0"="#ffa366","1"="#80d4ff"),
+    labels = c("New","Transfer In")
   )
-
-
-############################ LAB RESULTS ####################################
-#############################################################################
-start_period <- as.Date("2022/01/01")
-end_period   <- as.Date("2022/03/31")
-
-lab_data <-data.frame(
-  "lab_req" = c(340,109,153,69),
-  "lab_res" = c(303,29,88,59)
-)
-
-vl_data <- lab %>%
-  left_join(pat, "patient") %>%
-  select(patient, lab_dmy, lab_id, lab_v, facility) %>%
-  mutate(
-    quarter_year =
-      quarter(lab_dmy, with_year = T),
-    month_year   = format(as.Date(lab_dmy), "%Y-%m")
-  ) %>%
   
-filter(lab_id == "RNA" &
-         lab_dmy >= start_period & lab_dmy <= end_period)%>%
-group_by(facility, quarter_year) %>%
-  summarise(total_tier = n())
 
-#bind columns
-vl_data <- vl_data %>% bind_cols(lab_data) %>%
-  select(facility, quarter_year, lab_req, lab_res, total_tier)
+```
 
-vl_data_long <- vl_data %>% pivot_longer(cols = c(lab_req, lab_res, total_tier))
-  
-vl_data_long %>%
-  ggplot()+
-  geom_bar(
-    aes(x=name,y = value,fill=name),
-     position = "stack",
-     stat = "identity"
-  )+
-  facet_grid(~facility)+
-  labs(
-    title = "Demandes et réalisations CV, Janvier 2022 - Mars 2022",
-    x = "Type",
-    y = "Total"
-  )+
-  scale_fill_discrete(
-    labels=c("Demandes Labo","Resulats Labo", "Resultats Labo Tier")
-    )
+```{r include=FALSE}
 
+#TRANSFERS OUT CASCADE
+#Def : Here we want to check for CP enrollments (new+transfers in), how many are 
+# transferred out after 3M, 6M, 12M
+#Next we will look at transfer outs in quarters, and look at proportions that are
+#from 3M,6M and 12M
+
+#Check number of transfers out per patient
+#cp_trans_data %>%
+#cp_trans_group <- sapply(split(cp_trans_data$trans_cat,cp_trans_data$patient),length)
+#s <- split(cp_trans_data,cp_trans_data$patient)
+#sapply(s, function(x) split(x,x$trans_cat))
+
+# cp_trans_data%>%
+#   filter(facility_to=="CH KABINDA" & transfer_dmy >= cp_start_period )%>%
+#   mutate(
+#     quarter_year = quarter(transfer_dmy, with_year = T),
+#   )%>%
+#   group_by(quarter_year,method_into_art)%>%
+#   arrange(quarter_year)%>%
+#   summarise(total = n())%>%
+#   ggplot()+
+#   geom_bar(
+#     stat = "identity",
+#     color = "#661a00",
+#     position = position_stack(reverse = FALSE),
+#     aes(x = quarter_year,y = total,fill = method_into_art,
+#     )
+#   )
 
 
 ```
