@@ -1,14 +1,19 @@
 
 knitr::opts_chunk$set(echo = TRUE)
-
 #################################################
-# Trim all columns from a data frame and returned
-# trimmed data frame
+# Function : order drugs in regimen 
 #################################################
-trim_data_columns <-function(data){
-  for(i in 1:ncol(data)) {       # for-loop over columns
-    data[ , i] <- trimws(data[ , i])
-  }
-  return (data)
+## Order drugs function
+order_drug_fn <- function(regimen){
+  
+  #Drugs in correct order
+  regimen_list <- c("TDF","D4T","AZT","ABC","3TC","FTC","EFV","NVP","LPV","ATV","DRV","DTG")
+  
+  ##1. Split regimen into individual drugs
+  regimen_init  <- unlist(str_split(regimen,"/"))
+  ##2. Order drugs based on vector with ordered drugs
+  regimen_order <- regimen_init[order(match(regimen_init,regimen_list))]
+  ##3. Regroup ordered drugs to form regimen
+  regimen_final <- paste(regimen_order,collapse = "/")
+  regimen_final
 }
-
