@@ -39,7 +39,7 @@ source(source_path,local = knitr::knit_global())
 data_folder <- "data/"
 image_folder <- "images/"
 output_folder <- "output/"
-excelDBFile <- "TierXmlExcelConakry.xlsx"
+excelDBFile <- "TierXmlExcelKinshasa.xlsx"
 
 ###############################################################################
 #################   I. Importing & Exploring Data         #####################

@@ -7,7 +7,7 @@ knitr::opts_chunk$set(echo = TRUE)
 order_drug_fn <- function(regimen){
   
   #Drugs in correct order
-  regimen_list <- c("TDF","D4T","AZT","ABC","3TC","FTC","EFV","NVP","LPV","ATV","DRV","DTG")
+  regimen_list <- c("TDF","D4T","AZT","ABC","3TC","FTC","EFV","NVP","LPV","ATV","DTG","DRV")
   
   ##1. Split regimen into individual drugs
   regimen_init  <- unlist(str_split(regimen,"/"))

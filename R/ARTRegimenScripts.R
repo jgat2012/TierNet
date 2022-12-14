@@ -10,8 +10,8 @@ pacman::p_load(
   scales,     # easily convert proportions to percents  
   labelled,   # Variable and values labelling
   flextable,  # Format tables
-  sqldf,      # SQL queries
-  RODBC       # Odbc database connection
+  officer,    # helper functions for tables
+  sqldf       # SQL queries
 )
 
 # use here from the here package
@@ -26,8 +26,9 @@ source(source_path,local = knitr::knit_global())
 data_folder <- "data"
 image_folder <- "images"
 output_folder <- "output"
-startReportPeriod <- as.Date("2021/01/01")
-endReportPeriod   <- as.Date("2021/12/31")
+startReportPeriod <- as.Date("2022/01/01")
+endReportPeriod   <- as.Date("2022/09/30")
+project <-"Kinshasa"
 
 ###############################################################################
 #################   I. Importing & Exploring Data         #####################
@@ -56,24 +57,24 @@ art_patient_data <-art_data_pivot %>%
   select(cohort:enrol_year,everything())%>%
   
   ## Only select required variables
-  ## 20:ncol(.) as drugs start from 20th col till end
-  select(patient,cohort,facility,birth_dmy,gender,method_into_art,haart_dmy,outcome,outcome_dmy,art_sd_dmy,art_ed_dmy,20:ncol(.))%>%
+  ## 19:ncol(.) as drugs start from 19th col till end
+  select(patient,cohort,facility,birth_dmy,gender,method_into_art,haart_dmy,outcome,outcome_dmy,art_sd_dmy,art_ed_dmy,19:ncol(.))%>%
   
   ## Add extra columns
   mutate(
     period_drug_start = quarter(art_sd_dmy, with_year = T),
     year_drug_start   = year(art_sd_dmy),
     
-    #Calculate age and age categories
-    cur_age     = ceiling(interval(birth_dmy,endReportPeriod) %/% days(1) / (365)),
-    cur_age_cat = case_when(
-      cur_age   <5 ~ "<5",
-      cur_age >=5 & cur_age <10 ~  "5-9",
-      cur_age >=10 & cur_age <15 ~ "10-14",
-      cur_age >=15 & cur_age <19 ~ "15-18",
-      cur_age > 19 ~ ">18",
-      TRUE ~ ""
-    ),
+    # #Calculate age and age categories
+    # cur_age     = ceiling(interval(birth_dmy,endReportPeriod) %/% days(1) / (365)),
+    # cur_age_cat = case_when(
+    #   cur_age   <5 ~ "<5",
+    #   cur_age >=5 & cur_age <10 ~  "5-9",
+    #   cur_age >=10 & cur_age <15 ~ "10-14",
+    #   cur_age >=15 & cur_age <19 ~ "15-18",
+    #   cur_age > 19 ~ ">18",
+    #   TRUE ~ ""
+    # ),
     age_drug_start    = ceiling(interval(birth_dmy,art_sd_dmy) %/% days(1) / (365)),
     age_drug_st_cat   = case_when(
       age_drug_start >= 15 ~ "adult",
@@ -87,7 +88,7 @@ art_patient_data <-art_data_pivot %>%
   
   ## Combine drugs into regimens (merging drugs columns)
   unite(
-    "drugs",17:ncol(.),remove = FALSE,na.rm = TRUE,sep = "/"  
+    "drugs",18:ncol(.),remove = FALSE,na.rm = TRUE,sep = "/"  
   )%>%
   arrange(patient,art_sd_dmy,!is.na(art_ed_dmy))
 
@@ -111,18 +112,18 @@ vis_regimen <- sqldf::sqldf(
   )
 
 ## Clear duplicate visit rows based on patient data (folder_number,facility,dob,sex) and visit data
-vis_data_reg_dup <- vis_regimen[duplicated(vis_regimen[,1:8]),]
+vis_data_reg_dup <- vis_regimen[duplicated(vis_regimen[,1:7]),]
 
-vis_data_reg<-vis_regimen[!duplicated(vis_regimen[,1:8]),] %>%
+vis_data_reg<-vis_regimen[!duplicated(vis_regimen[,1:7]),] %>%
 
 ## Pivot to wide format to list drugs per visit per patient
-pivot_wider(id_cols = c(patient,folder_number,visit_dmy,birth_dmy,gender),names_from = drugs,values_from = drugs) %>%
+pivot_wider(id_cols = c(patient,facility,folder_number,visit_dmy,birth_dmy,gender),names_from = drugs,values_from = drugs) %>%
 
 ## Merge drugs columns
-## @TODO : Make selection of drugs columns dynamic
+
   
 unite(
-  "regimen",6:ncol(.),remove = TRUE,na.rm = TRUE,sep = "/"  
+  "regimen",7:ncol(.),remove = TRUE,na.rm = TRUE,sep = "/"  
 ) %>%
   
   mutate(
@@ -150,7 +151,7 @@ art_cur_reg <- art_patient_data %>%
 
 ## Get current regimens per patient, grouped per drugs started on same day
 art_cur_reg <-  sqldf::sqldf("
-  select d.patient,d.birth_dmy,d.gender,d.haart_dmy,d.outcome,d.outcome_dmy, d.art_sd_dmy,d.art_ed_dmy,d.drugs,d1.drugs as drugs1
+  select d.facility,d.patient,d.birth_dmy,d.gender,d.haart_dmy,d.outcome,d.outcome_dmy, d.art_sd_dmy,d.art_ed_dmy,d.drugs,d1.drugs as drugs1
     from art_cur_reg d
     left join art_cur_reg d1 
       on d.patient = d1.patient and (d1.art_sd_dmy <= d.art_sd_dmy )
@@ -158,44 +159,65 @@ art_cur_reg <-  sqldf::sqldf("
       and ( (d1.art_ed_dmy IS NULL) or d1.art_ed_dmy > d.art_sd_dmy  )
       and d.drugs <> d1.drugs") %>%
   na_if("")%>%
-  pivot_wider(id_cols = c(patient,birth_dmy,gender,haart_dmy,outcome,outcome_dmy,art_sd_dmy,art_ed_dmy,drugs),names_from = drugs1,values_from = drugs1) %>%
+  pivot_wider(id_cols = c(facility,patient,birth_dmy,gender,haart_dmy,outcome,outcome_dmy,art_sd_dmy,art_ed_dmy,drugs),names_from = drugs1,values_from = drugs1) %>%
   
   unite(
-    ## Individual drugs start from 9th column
-    "cur_regimen",9:ncol(.),remove = TRUE,na.rm = TRUE,sep = "/"  
+    ## Individual drugs start from 10th column
+    "cur_regimen",10:ncol(.),remove = TRUE,na.rm = TRUE,sep = "/"  
   ) %>%
   
   arrange(desc(art_sd_dmy))
 
 ## Get latest current regimens, one line per patient 
-## Columns to be considered as unique: [patient,birth_dmy,gender,haart_dmy,outcome,outcome_dmy]
-art_cur_reg_data<-art_cur_reg[!duplicated(art_cur_reg[,1:6]),]
+## Columns to be considered as unique: [facility,patient,birth_dmy,gender,haart_dmy,outcome,outcome_dmy]
+art_cur_reg_data<-art_cur_reg[!duplicated(art_cur_reg[,1:7]),]
 
 ## Get latest visits date for each of the patient by joining with visit table
 #############################################################################
-vis_art_cur_reg  <- art_cur_reg_data %>%
+
+#Visits data within reporting period
+# visit_rep_period <-vis %>%
+#   filter(visit_dmy >=startReportPeriod & visit_dmy <=endReportPeriod)
+
+
+
+vis_art_cur_reg <- vis_data %>%
+  
+  ## Filter only visits for patients still in care (outcome ==20)
+  filter(outcome==20) %>%
+  select(patient,visit_dmy,next_visit_dmy) %>%
+  ## Join visit data with regimen table
+  left_join(art_cur_reg_data,"patient") %>%
+  
+  ## Exclude patients with no regimen data for the period (i.e. came but no active regimen)
+  filter(!is.na(facility)) %>%
+
+#vis_art_cur_reg <- art_cur_reg_data %>%
   
   ## Join cur_reg data with visit data
-  left_join(vis,"patient") %>%
+ # left_join(vis,"patient") %>%
   
   ## Select all columns from art_cur_reg_data and add visit and next visit date
-  select(1:ncol(art_cur_reg_data),visit_dmy,next_visit_dmy) %>%
+  
+  select(colnames(art_cur_reg_data),visit_dmy,next_visit_dmy)  %>%
   
   ##Order by patient and visit date (latest visit first)
   arrange(desc(patient),desc(visit_dmy))
 
-## Remove duplicate based on patient data [patient, dob,sex,art_start_date,outcome,outcome_date]
-vis_art_cur_reg_data <- vis_art_cur_reg[!duplicated(vis_art_cur_reg[,1:6]),]
+## Remove duplicate based on patient data [facility,patient, dob,sex,haart_dmy,outcome,outcome_date,art_start_date]
+vis_art_cur_reg_data <- vis_art_cur_reg[!duplicated(vis_art_cur_reg[,1:8]),] %>%
+
+##@TODO : TO be revisited when clarity is there on which patients to consider
+##For now we are only running scripts for patients who visited in current year (Jan - Sep)
+  filter(visit_dmy >=startReportPeriod & visit_dmy <=endReportPeriod)
 
 
 ## Get Last VL data
 lab_data_vl <-lab %>%
   filter((lab_id =="RNA") & !is.na(lab_v))
 
-## @TODO : NEED TO UPDATE and check VL Date from latest patient visit
-#############!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-## Get last VL within a year of end of current reporting/observation period
+## Get last VL within a year of visit date
 art_cur_reg_lvl<-fn$sqldf(
   "select data.*,vl.lab_dmy,vl.lab_v
     from vis_art_cur_reg_data data
@@ -212,8 +234,8 @@ art_cur_reg_lvl<-fn$sqldf(
   arrange(desc(patient),desc(lastvl_date))
 
 ## Remove duplicate patients and keep latest VL results
-## unique columns : [patient, dob,sex,art_start_date,outcome,outcome_date]
-art_cur_reg_lvl_data<-art_cur_reg_lvl[!duplicated(art_cur_reg_lvl[,1:6]),] %>%
+## unique columns : [facility,patient, dob,sex,art_start_date,outcome,outcome_date]
+art_cur_reg_lvl_data<-art_cur_reg_lvl[!duplicated(art_cur_reg_lvl[,1:8]),] %>%
   mutate(
     ## Calculate age and add age categories
     ## Current age calculated from dob to latest visit date
@@ -237,7 +259,7 @@ art_cur_reg_lvl_data<-art_cur_reg_lvl[!duplicated(art_cur_reg_lvl[,1:6]),] %>%
     ## Convert age category to factor
     cur_age_cat = factor(cur_age_cat,levels = c("<5","5-9","10-14","15-19",">19")),
     ## Order drugs in regimen
-    cur_reg_ord = map(cur_regimen,order_drug_fn)
+    cur_reg_ord = unlist(map(cur_regimen,order_drug_fn))
     
   )%>%
   mutate(
@@ -251,7 +273,8 @@ art_cur_reg_lvl_data<-art_cur_reg_lvl[!duplicated(art_cur_reg_lvl[,1:6]),] %>%
         age_art_start > 19 ~ ">19",
         TRUE ~ ""
     ),
-    ## Period on ART (date start on art with latest visit)
+    ## Period on ART (compare art start date with latest visit)
+    project           = project,
     age_on_art        = floor(interval(haart_dmy,latest_visit_dmy) %/% days(1) / (365)),
     age_on_art_cat    = case_when(
         age_on_art   < 1 ~ "<1",
@@ -263,12 +286,32 @@ art_cur_reg_lvl_data<-art_cur_reg_lvl[!duplicated(art_cur_reg_lvl[,1:6]),] %>%
   arrange(desc(patient),desc(art_sd_dmy)) %>%
   
   ## change order of variables
-  select(patient,latest_visit_dmy,next_visit_dmy,birth_dmy,gender,haart_dmy,age_art_start,cur_age,age_on_art,age_art_start_cat,cur_age_cat,age_on_art_cat,cur_reg_ord,art_sd_dmy,lastvl_date,lastvl_value)
+  select(project,facility,patient,latest_visit_dmy,next_visit_dmy,birth_dmy,gender,haart_dmy,age_art_start,cur_age,age_on_art,age_art_start_cat,cur_age_cat,age_on_art_cat,cur_reg_ord,art_sd_dmy,lastvl_date,lastvl_value,outcome,outcome_dmy)
+
+
+
+### Export to Excel
+## Create a new workbook
+wb <- createWorkbook("PaedsAnalysis")
+openxlsx::addWorksheet(wb, "LineList", gridLines = TRUE)
+openxlsx::writeData(wb, sheet = 1, art_cur_reg_lvl_data,borderStyle = "thin",withFilter = TRUE)
+file_name<-paste(here("output/PaedsAnalysis_"),project,"_",Sys.Date(),".xlsx",sep = "")
+
+openxlsx::saveWorkbook(wb, file_name, overwrite = TRUE)
+
+
+
+
+
+
+
+
 
 ## Add age categories
 ######## FROM HERE GOING DOWN : NEED REWORK !!!!! ####################
 ## Get patient who are currently in care (latest outcome)
 art_cur_reg_lvl_incare_data <- art_cur_reg_lvl_data[!duplicated(art_cur_reg_lvl_data[,1:5]),] %>%
+  ## 20 == incare
   filter(outcome == 20)
 
 ##SUMMARIES
@@ -294,18 +337,12 @@ art_cur_reg_sum_reg <- art_cur_reg_lvl_incare_data %>%
     cums = cumsum(freq),
     cump = round((cums/sum(freq))*100,2),
   ) 
-art_cur_reg_sum_reg
+
+##art_cur_reg_sum_reg
 
 
 ### Order drugs in regimen
 
 
 
-
-
-
-
-## NEXT STEPS
-## 1. Make sure order of drugs in regimen is okay
-## 2. Add age at regimen start and age at reporting period
 

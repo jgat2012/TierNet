@@ -1,0 +1,279 @@
+---
+title: "Paeds analysis"
+author: "Gauthier A."
+date: '2022-11-17'
+output:
+  word_document: default
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+pacman::p_load(
+  here       # relative file pathways
+)
+source(here("R", "ARTRegimenScripts.R"),local = knitr::knit_global())
+#define flextable caption setting
+autonum <- run_autonum(seq_id = "tab", bkm = "TC1", bkm_all = TRUE)
+```
+
+## I. Considerations
+***
+1. We have considered the period running from **`r startReportPeriod `** to **`r endReportPeriod `**. This might exclude some patients still in care but that have not come for the reporting period. The number should however not be that big.
+2. The data is reported per patient and not per visit and we are considering the latest visit of the patient during the reporting period
+3. **Valid VL** means any VL done within the last 12 months from the visit date
+4. **Current age** is age as per the patient latest visit date
+5. Cleaning is still to be done on some of the regimens (some regimens have 1 or 2 drugs)
+6. Kinshasa data does not include all the facilities for now. Only includes 3 facilities instead of 5. 
+7. Paeds age definition : <=19 years
+
+```{r echo = FALSE, warning=FALSE}
+
+##1. Load excel files for all projects and put them into one dataframe
+full_dataset_kin <- readxl::read_excel(here(output_folder,"PaedsAnalysis_Kinshasa_2022-12-13.xlsx"))
+full_dataset_ban <- readxl::read_excel(here(output_folder,"PaedsAnalysis_Bangui_2022-12-13.xlsx"))
+full_dataset_con <- readxl::read_excel(here(output_folder,"PaedsAnalysis_Conakry_2022-12-13.xlsx"))
+
+col_names <- colnames(full_dataset_kin)
+#Create data frame to combine all projects data
+full_dataset <-data.frame(matrix(nrow = 0,ncol=length(col_names)))
+colnames(full_dataset) <-col_names
+
+full_dataset <- full_dataset %>%
+  rbind(
+    full_dataset_kin
+  ) %>%
+  rbind(
+    full_dataset_ban
+  ) %>%
+  rbind(
+    full_dataset_con
+  ) %>%
+  mutate(
+    ## Replace gender codes with values
+    gender       = str_replace_all(.$gender,c("1"="male","2"="female")),
+    cur_age      = as.numeric(cur_age),
+    lastvl_value = as.numeric(lastvl_value), 
+    cur_age_cat  = factor(cur_age_cat,levels = c("<5", "5-9", "10-14","15-19",">19"))
+  )
+
+## Summary patients per facility
+summary_patient_per_facility <- full_dataset %>%
+  select(project,facility,patient) %>%
+  group_by(project,facility) %>%
+  summarise(
+    no_patient = n_distinct(patient),
+    .groups = "keep"
+  )
+
+###### Descriptive analysis ######
+##################################
+
+## Patients per project per age group
+patient_per_age_grp <- full_dataset %>%
+
+  select(project,patient,cur_age_cat) %>%
+  tabyl(
+    project,cur_age_cat
+    
+  ) %>%
+  adorn_totals(where = "col") %>%             # add a total column
+  adorn_percentages(denominator = "row") %>%  # convert to proportions
+  adorn_pct_formatting() %>%                  # convert to percents
+  adorn_ns(position = "front")                # display as: "count (percent)"
+  
+patient_per_age_grp_flex <- patient_per_age_grp %>%
+  flextable::flextable() %>%                  # convert to pretty image
+  flextable::autofit()  %>%                   # format to one line per row 
+  #Adding caption to the table
+  set_caption(caption = stringr::str_glue("No of patients per age category per project who visited between {startReportPeriod} and {endReportPeriod}"), style = "Table Caption", autonum = autonum)
+  
+
+
+full_dataset_paeds <- full_dataset %>%
+   #Only get paeds data
+  filter(cur_age <=19) 
+
+## Regimens distribution for paeds
+cur_reg_paeds_sum <- full_dataset_paeds %>%
+  
+  group_by(project,cur_reg_ord) %>%
+  summarise(
+    total = n(),
+    .groups = "keep"
+  ) %>%
+  arrange(desc(project),desc(total))
+
+cur_reg_paeds_det <- full_dataset_paeds %>%
+  group_by(project,cur_reg_ord,cur_age_cat) %>%
+  summarise(total=n(),.groups = "keep") %>%
+  arrange(cur_age_cat)%>%
+  #pivot_wider(names_from = cur_age_cat,values_from = total) %>%
+  arrange(project) # %>%
+  #adorn_totals(where = "col")
+
+cur_reg_paeds_det_plot <- cur_reg_paeds_det %>%
+  arrange(total) %>%
+  ggplot()+
+  geom_col(
+    mapping = aes(
+      x    = total,
+      fill =  cur_age_cat,
+      y    = cur_reg_ord
+    )
+  ) +
+  facet_wrap(~project) +
+  theme(
+    plot.title = element_text(size = 9),
+    aspect.ratio = 1.4,
+    legend.position = "bottom",
+    legend.title = element_text("Current age category")
+  )+
+  labs(
+    title = stringr::str_glue("Current paeds(<=19y) regimens per project for patients, period between {startReportPeriod} and {endReportPeriod}") ,
+    x     = "Total",
+    y     = "Regimen",
+  )
+
+pptx <- read_pptx()
+pptx %>%
+  add_slide() %>%
+  ph_with(cur_reg_paeds_det_plot,location = ph_location_type(type = "body")) %>%
+  add_slide() %>% 
+  # This line puts in a shape object, which can be ungrouped and edited
+  ph_with(rvg::dml(ggobj = cur_reg_paeds_det_plot),
+          width = 8,
+          height = 4, 
+          location = ph_location_type(type = "body"))
+
+print(pptx, "test_graph.pptx")
+
+
+## Viral load Coverage and suppression for paeds
+vl_paeds_sum <- full_dataset_paeds %>%
+  group_by(project) %>%
+  summarise(
+    patient       = n(),
+    valid_vl      = sum(!is.na(lastvl_value),na.rm = TRUE),
+    vl_supp       = sum(lastvl_value <1000,na.rm = TRUE),
+    `%VL coverage` = percent(valid_vl/patient,2),
+    `%VL Supp`     = percent(vl_supp/valid_vl,2),
+    .groups = "keep"
+  )
+
+vl_paeds_sum_flex <- vl_paeds_sum %>%
+  flextable::flextable() %>%
+  flextable::autofit() %>%
+  #Adding caption to the table
+  set_caption(caption = stringr::str_glue("Summary paeds VL coverage and suppression, patients visits between {startReportPeriod} and {endReportPeriod}"), style = "Table Caption", autonum = autonum)
+
+
+vl_paeds_det <- full_dataset_paeds %>%
+  group_by(project,cur_age_cat) %>%
+  summarise(
+    `no_patient`       = n(),
+    `valid_vl`   = sum(!is.na(lastvl_value),na.rm = TRUE),
+    `vl_supp`    = sum(lastvl_value <1000,na.rm = TRUE),
+    #`%VL coverage`  = percent(valid_vl/patient,2),
+    #`%VL Supp`      = percent(vl_supp/valid_vl,2),
+    .groups = "keep"
+  )%>%
+  mutate(
+    `valid_vl (%)`  =str_glue("{`valid_vl`} ({percent(valid_vl/no_patient)})"),
+    `vl_supp (%)`   =str_glue("{vl_supp} ({percent(`vl_supp`/valid_vl)})"),
+    no_patient      =as.character(no_patient)
+  ) %>%
+  pivot_longer(cols = c(`no_patient`,`valid_vl (%)`,`vl_supp (%)`),names_to = "category")%>%
+  pivot_wider(id_cols = c("project","category"),names_from = cur_age_cat,values_from = value)
+  
+  
+  vl_paeds_det_flex <- vl_paeds_det %>%
+  flextable::flextable() %>%
+  flextable::autofit() %>%
+  #Adding caption to the table
+  set_caption(caption = stringr::str_glue("Detailed paeds VL coverage and suppression, patients visits between {startReportPeriod} and {endReportPeriod}"), style = "Table Caption", autonum = autonum)
+
+## Data dictionary
+
+
+data_dict <-data.frame(
+  colnames(full_dataset),
+  c(
+    "Project Name",
+    "Facility Name",
+    "Patient Code",
+    "Latest visit date during reporting period",
+    "Next appointment date from latest visit",
+    "Date of birth",
+    "Sex",
+    "ART Start date",
+    "Age at ART Start date",
+    "Current age as per latest visit date",
+    "Period on art",
+    "Age at ART Start category",
+    "Current age category",
+    "Period on art category",
+    "Latest regimen as per latest visit date",
+    "Latest regimen start date",
+    "Latest Valid (within 12 months) VL date. If no VL within 12 month, blank",
+    "Latest Valid (within 12 months) VL value. If no VL within 12 month, blank",
+    "Patient Outcome status from Tier.net (20==in care)",
+    "Patient outcome status date")
+)
+colnames(data_dict) <-c("Variable","Description")
+
+```
+
+## II. Patients per project per age group
+***
+```{r echo=FALSE, warning=FALSE}
+patient_per_age_grp_flex
+
+```
+
+## III. Regimens distribution for Paeds
+***
+```{r echo=FALSE, warning=FALSE}
+cur_reg_paeds_det_plot
+
+```
+
+## IV. Viral Load Coverage and Suppression for Paeds
+***
+
+`r vl_paeds_sum_flex`  
+  
+  
+`r vl_paeds_det_flex`  
+  
+  *vl_valid* : No of patients with a valid VL
+
+```{r echo=FALSE, warning=FALSE}
+###Export all the data to Excel
+## Create a new workbook
+wb <- createWorkbook("PaedsAnalysis")
+
+## Add a worksheets
+openxlsx::addWorksheet(wb, "Raw lineList", gridLines = TRUE)
+openxlsx::addWorksheet(wb, "Pat per age group", gridLines = TRUE)
+openxlsx::addWorksheet(wb, "Paeds regimen Distribution", gridLines = TRUE)
+openxlsx::addWorksheet(wb, "Paeds VL Coverage and Supp", gridLines = TRUE)
+openxlsx::addWorksheet(wb, "Data Dictionary", gridLines = TRUE)
+## write dataframes to worksheets
+openxlsx::writeData(wb, sheet = 1, full_dataset ,borderStyle = "thin",withFilter = TRUE)
+openxlsx::writeData(wb, sheet = 2, data_dict,borderStyle = "thin",withFilter = FALSE)
+openxlsx::writeData(wb, sheet = 3, patient_per_age_grp,borderStyle = "thin",withFilter = FALSE)
+openxlsx::writeData(wb, sheet = 4, cur_reg_paeds_det,borderStyle = "thin",withFilter = FALSE)
+openxlsx::writeData(wb, sheet = 5, vl_paeds_det,borderStyle = "thin",withFilter = FALSE)
+
+
+file_name<-paste(here("output/Paedsanalysisdata_"),Sys.Date(),".xlsx",sep = "")
+
+openxlsx::saveWorkbook(wb, file_name, overwrite = TRUE)
+
+```
+
+
+
