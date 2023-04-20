@@ -1,7 +1,7 @@
 ---
 title: "Tiernet"
 author: "Gauthier A."
-date: "06/10/2022"
+date: "20/04/2023"
 output: html_document
 ---
 
@@ -19,12 +19,14 @@ source(source_path,local = knitr::knit_global())
 #Set vector size limit
 memory.limit(size = 4000)
 
+project <- "HIV/Conakry"
+
 data_folder <- "data"
 image_folder <- "images"
 output_folder <- "output"
 
-start_period <-as.Date("2022/01/01")
-end_period   <-as.Date("2022/06/30")
+start_period <-as.Date("2023/01/01")
+end_period   <-as.Date("2023/03/31")
 
 pat_col_ind  <- 4 #Patient column index in the data frame
 days_ltfup   <-90 #Days for ltfu. This can be context specific
@@ -224,6 +226,7 @@ vis_cd4_crag_tbm_lvl_l3cd4<-vis_cd4_crag_tbm_lvl_l3cd4 %>%
 #vis_cd4_crag_tbm_lvl_l3cd4_data_dup<-vis_cd4_crag_tbm_lvl_l3cd4[duplicated(vis_cd4_crag_tbm_lvl_l3cd4[,1:25]),]
 vis_cd4_crag_tbm_lvl_l3cd4_data<-vis_cd4_crag_tbm_lvl_l3cd4[!duplicated(vis_cd4_crag_tbm_lvl_l3cd4[,1:25]),]
 
+rm(list = c("vis_cd4_crag_tbm_lvl_l3cd4"))
 
 ################## LAST NEXT APPOINTMENT DATA ########################
 ######################################################################
@@ -237,6 +240,7 @@ vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_data <- vis_cd4_crag_tbm_lvl_l3cd4_data %>%
   ) %>%
   select(last_next_app,visit_dmy,miss_app_days,everything())
 
+#object.size(vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans_data)
 #object.size(vis_cd4_crag_tbm_lvl_l3cd4_data)
 
 ########################## TRANSFER DATA #############################
@@ -279,10 +283,19 @@ rm(list = c("vis","vis_cd4_crag_tbm_lvl_l3cd4","vis_cd4_crag_tbm_lvl_l3cd4_data"
 
 
 #Summary data for AHD cascade
-summ_data_ahd <-data.frame(matrix(nrow = 0,ncol=14))
-col_names <- c("category","eligible","cd4_done","%cd4_done","cd4_lt200","%cd4_lt200",
+#If facility included, ncol = 16, if not ncol = 15
+
+col_facility <-"facility"
+vis_period   <-"period"
+col_names <- c(
+              #col_facility,
+              "category",
+              #vis_period
+              "eligible","cd4_done","%cd4_done","cd4_lt200","%cd4_lt200",
                "lam_done","%lam_done","crag_done_","%crag_done","lam_pos","%lam_pos",
                "crag_pos","%crag_pos")
+
+summ_data_ahd <-data.frame(matrix(nrow = 0,ncol=length(col_names)))
 colnames(summ_data_ahd) <-col_names
 
 vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans_data <- vis_cd4_crag_tbm_lvl_l3cd4_lstnxtapp_trans_data %>%
@@ -341,7 +354,11 @@ summ_data_ahd <- summ_data_ahd %>%
       mutate(
         category    = "new art initiations",
       )%>%
-      group_by(category) %>%
+      group_by(
+        #facility,
+        category
+        #,vis_quarter_year
+        ) %>%
       summarise(
         eligible    = n(),
         cd4_done    = sum(!is.na(cd4_value),na.rm = TRUE),
@@ -409,7 +426,11 @@ summ_data_ahd <- summ_data_ahd %>%
       mutate(
         category    = "returnees",
       )%>%
-      group_by(category) %>%
+      group_by(
+        #facility,
+        category
+        #,vis_quarter_year
+        ) %>%
       summarise(
         eligible    = n(),
         cd4_done    = sum(!is.na(cd4_value),na.rm = TRUE),
@@ -473,7 +494,11 @@ summ_data_ahd <- summ_data_ahd %>%
       mutate(
         category    = "high vl",
       )%>%
-      group_by(category) %>%
+      group_by(
+        #facility,
+        category
+        #,vis_quarter_year
+        ) %>%
       summarise(
         eligible    = n() ,
         cd4_done    = sum(!is.na(cd4_value),na.rm = TRUE),
@@ -562,7 +587,11 @@ summ_data_ahd <- summ_data_ahd %>%
       mutate(
         category    = "patient with no cd4",
       )%>%
-      group_by(category) %>%
+      group_by(
+        #facility,
+        category
+        #,vis_quarter_year
+        ) %>%
       summarise(
         eligible    = n(),
         cd4_done    = sum(!is.na(cd4_value),na.rm = TRUE),
@@ -617,7 +646,11 @@ summ_data_ahd <- summ_data_ahd %>%
       mutate(
         category    = "Other patients",
       )%>%
-      group_by(category) %>%
+      group_by(
+        #facility,
+        category
+        #,vis_quarter_year
+        ) %>%
       summarise(
         eligible    = NA,
         cd4_done    = sum(!is.na(cd4_value),na.rm = TRUE),
@@ -645,7 +678,9 @@ summ_data_ahd <- summ_data_ahd %>%
 #Update data in total now
 total_row <- tail(summ_data_ahd,1) %>%
   mutate(
+    #facility    = "All",
     category    = "Total(patient)",
+    #vis_quarter_year= NA,
     eligible    = NA,
     `%cd4_done` = NA, 
     `%cd4_lt200`= round((cd4_lt200/cd4_done),4)*100,
@@ -656,31 +691,51 @@ total_row <- tail(summ_data_ahd,1) %>%
   )
 
 summ_data_ahd[nrow(summ_data_ahd),] <-total_row
+```
 
+```{r include=FALSE}
+## Create a new workbook
+wb <- createWorkbook("TierAnalysisAHD")
+
+## Variables to include in the export
+cols_export <-c("visit_dmy","next_visit_dmy","folder_number","facility","birth_dmy","haart_dmy","cd4_date","cd4_value","cd4_category","crag_date","crag_value","tbm_date","tbm_value","lastvl_date","lastvl_value","last3cd4_date","last3cd4_value")
+
+
+## Add a worksheets
+openxlsx::addWorksheet(wb, "NewInitiation", gridLines = TRUE)
+openxlsx::addWorksheet(wb, "CV elevé", gridLines = TRUE)
+openxlsx::addWorksheet(wb, "Interrupteurs", gridLines = TRUE)
+openxlsx::addWorksheet(wb, "Sans CD4", gridLines = TRUE)
+openxlsx::addWorksheet(wb, "Sommaire", gridLines = TRUE)
+## write dataframes to worksheets
+openxlsx::writeData(wb, sheet = 1, new_init_data %>% select(cols_export),borderStyle = "thin",withFilter = TRUE)
+openxlsx::writeData(wb, sheet = 2, high_vl_data %>% select(cols_export),borderStyle = "thin",withFilter = TRUE)
+openxlsx::writeData(wb, sheet = 3, returnees_data %>% select(cols_export),borderStyle = "thin",withFilter = TRUE)
+openxlsx::writeData(wb, sheet = 4, no_cd4_data %>% select(cols_export),borderStyle = "thin",withFilter = TRUE)
+openxlsx::writeData(wb, sheet = 5, summ_data_ahd,borderStyle = "thin",withFilter = TRUE)
+
+file_name<-paste(here("output/TierAHD_"),Sys.Date(),".xlsx",sep = "")
+
+openxlsx::saveWorkbook(wb, file_name, overwrite = TRUE)
+
+```
+
+```{r include=FALSE}
 ############ GENERATING GRAPHS AND TABLES FOR PRESENTATION  ##############
 ##########################################################################
-
-
-# no_cd4_data %>%
-#   group_by(facility) %>%
-#   summarise(total = n())
-# 
-# no_cd4_data %>%
-#   ggplot(
-#     aes(x = enrol_year,
-#     )
-#   ) +
-#   geom_histogram(bins = 8) +
-#   facet_wrap(~ facility)
+diagram_title <-c(paste('PHC AHD Cascade - ',project,', ',start_period,'to',end_period))
 
 
 DiagrammeR::grViz(
   "digraph ahdcascade{
   
-    graph[layout = dot]
+    graph[layout = dot,
+          labelloc='t' , # Title location as 't'op
+          label='@@18', # Diagram title
+          fontsize = 24] # Title font size
     
     # define the global styles of the nodes. We can override these in box if we wish
-    node [shape = rectangle, width=4, style = filled, fillcolor = white,fontsize = 16]
+    node [shape = rectangle, width=4, style = filled, fillcolor = white,fontsize = 20]
     
     vis      [label = '@@1']
     newinit  [label = '@@2' fillcolor = MistyRose]
@@ -705,6 +760,7 @@ DiagrammeR::grViz(
     lampos [label = '@@16']
     cragpos[label = '@@17']
     
+    ## Associations for diagrams
     vis -> {newinit, highvl,returnee,nocd4,others}
     
     newinit  -> newinitcd4
@@ -739,37 +795,28 @@ DiagrammeR::grViz(
   [14]: paste0(' %Tblam done (',summ_data_ahd[[6,8]],') \\n',summ_data_ahd[[6,7]],'/',summ_data_ahd[[6,5]])
   [15]: paste0(' %Crag done (',summ_data_ahd[[6,10]],') \\n',summ_data_ahd[[6,9]],'/',summ_data_ahd[[6,5]])
   [16]: paste0(' %Tblam +(',summ_data_ahd[[6,12]],') \\n',summ_data_ahd[[6,11]],'/',summ_data_ahd[[6,7]])
-  [17]: paste0(' %Crag +(',summ_data_ahd[[6,14]],') \\n',summ_data_ahd[[6,13]],'/',summ_data_ahd[[6,9]])"
+  [17]: paste0(' %Crag +(',summ_data_ahd[[6,14]],') \\n',summ_data_ahd[[6,13]],'/',summ_data_ahd[[6,9]])
+  [18]: paste0(diagram_title,'\\n \\n')"
   ) %>%
   
   ## Export the cascade into an image in the output folder
   export_svg %>% charToRaw %>% rsvg::rsvg_png(paste(here("output/ahd_cascade_"),Sys.Date(),".png",sep = ""))
+  ##export_graph(file_name = "test.png")
 
 
-tapply(new_init_data$patient, new_init_data$facility, function(x) length(x))
+# tapply(new_init_data$patient, new_init_data$facility, function(x) length(x))
+# 
+# lab_test <- lab_data_cd4 %>%
+#   filter(lab_dmy>=as.Date("2022-01-01") & lab_dmy<=as.Date("2022-06-30")) %>%
+#   arrange(desc(lab_dmy))
+# 
+# lab_test <-lab_test[!duplicated(lab_test[,1]),]
+# lab_test%>%
+#   group_by(cd4_category)%>%
+#   
+#   summarise(
+#     tot =n()
+#   )
 
-## Create a new workbook
-wb <- createWorkbook("TierAnalysisAHD")
-
-## Variables to include in the export
-cols_export <-c("visit_dmy","next_visit_dmy","folder_number","facility","birth_dmy","haart_dmy","cd4_date","cd4_value","cd4_category","crag_date","crag_value","tbm_date","tbm_value","lastvl_date","lastvl_value","last3cd4_date","last3cd4_value")
-
-
-## Add a worksheets
-openxlsx::addWorksheet(wb, "NewInitiation", gridLines = TRUE)
-openxlsx::addWorksheet(wb, "CV elevé", gridLines = TRUE)
-openxlsx::addWorksheet(wb, "Interrupteurs", gridLines = TRUE)
-openxlsx::addWorksheet(wb, "Sans CD4", gridLines = TRUE)
-openxlsx::addWorksheet(wb, "Sommaire", gridLines = TRUE)
-## write dataframes to worksheets
-openxlsx::writeData(wb, sheet = 1, new_init_data %>% select(cols_export),borderStyle = "thin",withFilter = TRUE)
-openxlsx::writeData(wb, sheet = 2, high_vl_data %>% select(cols_export),borderStyle = "thin",withFilter = TRUE)
-openxlsx::writeData(wb, sheet = 3, returnees_data %>% select(cols_export),borderStyle = "thin",withFilter = TRUE)
-openxlsx::writeData(wb, sheet = 4, no_cd4_data %>% select(cols_export),borderStyle = "thin",withFilter = TRUE)
-openxlsx::writeData(wb, sheet = 5, summ_data_ahd,borderStyle = "thin",withFilter = TRUE)
-
-file_name<-paste(here("output/TierAHD_"),Sys.Date(),".xlsx",sep = "")
-
-openxlsx::saveWorkbook(wb, file_name, overwrite = TRUE)
 
 ```
